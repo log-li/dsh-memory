@@ -2,6 +2,20 @@
 
 All notable changes to this project are documented here, following [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); versions track `package.json`.
 
+## [0.8.0] - 2026-09-23
+
+### Removed
+
+- **The persona half of the plugin is gone.** Soul-bootstrap (the first-person "define who I am" directive, the `SOUL.md` / `BOOTSTRAP.md` templates and the "soul first, tasks later" instruction), proactive recall (the idle-time "I remember when…" line) and the digest reminder are all removed, together with the ten settings keys and the activity tracker behind them. This plugin is memory, not a persona: a fresh session gets the rules, the hot index and nothing else — a brand-new store no longer opens a "what should my name be?" conversation.
+- **The two polite injection gates are gone** (`deferUntilUserSpeaks`, `activeSessionOnly`): memory is a stable part of every session instead of appearing once you speak. The one filter that remains is structural — only root sessions are injected, so subagents neither read nor write long-term memory.
+- Keys left over in `memory.json` (`recall*`, `digestNudge*`, `deferUntilUserSpeaks`, `activeSessionOnly`) are ignored rather than rejected, and disappear from the file on the next settings write.
+
+### Changed
+
+- **Automemory is now on by default** (`autoMemory: true`): the silent end-of-turn extraction replaces the removed digest reminder. It still runs through the same engine as `memory_write` (duplicate check, version check, catalog row, optional log entry), still only twice per session and a few turns apart, and can be switched off in the Settings panel.
+- `bootFiles` no longer includes `SOUL.md` by default. Persona files, if a store has them, are ordinary pages: readable, searchable, never resident.
+- A store scaffolded by `dsh-memory init` now creates `MEMORY.md` / `index.md` / `log.md` plus the category directories — no persona templates.
+
 ## [0.7.0] - 2026-09-23
 
 ### Added
@@ -101,6 +115,20 @@ All notable changes to this project are documented here, following [Keep a Chang
 # 更新日志（Changelog）
 
 所有记录跟随 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/) 风格；版本号与 `package.json` 保持一致。
+
+## [0.8.0] - 2026-09-23
+
+### Removed（persona 半边整体删除）
+
+- **删掉铸魂/人格那一半**：第一人称「先定义我是谁」引导词、`SOUL.md` / `BOOTSTRAP.md` 模板、「铸魂优先于任务」的指令、主动追忆（空闲时第一人称提往事）、防懒 digest 提醒，连同它们背后的 10 个配置键与 activity-tracker 一起删除。本插件只做记忆、不做人格：新会话只拿到规则 + 热页索引，**空库也不再开口问「我该叫什么名字」**。
+- **删掉两道礼貌注入闸门**（`deferUntilUserSpeaks`、`activeSessionOnly`）：记忆成为每个会话的稳定组成部分，而不是"你开口后才出现"。唯一保留的过滤是结构性的——**只给 root 会话注入**，子代理既不读也不写长期记忆。
+- `memory.json` 里残留的旧键（`recall*`、`digestNudge*`、`deferUntilUserSpeaks`、`activeSessionOnly`）被忽略而不是报错，下次保存配置时自动消失。
+
+### Changed
+
+- **automemory 改为默认开**（`autoMemory: true`）：用静默的轮末抽取取代被删掉的催记提醒。仍然走与 `memory_write` 同一套引擎（查重 + 版本校验 + index 一行 + 可选 log 条目）、仍然每会话最多 2 次且间隔若干轮，随时可在设置面板关掉。
+- `bootFiles` 默认不再包含 `SOUL.md`。老库里若有人格文件，它们就是普通页面：可读、可检索、永不常驻。
+- `dsh-memory init` 现在只创建 `MEMORY.md` / `index.md` / `log.md` 与分类目录，不再生成人格模板。
 
 ## [0.7.0] - 2026-09-23
 

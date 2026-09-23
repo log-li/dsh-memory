@@ -23,7 +23,7 @@ import { tmpdir, homedir } from 'node:os'
 import { createHash } from 'node:crypto'
 import { ensureMemoryScaffold } from '../lib/scaffold.js'
 
-const META = new Set(['SOUL.md', 'MEMORY.md', 'BOOTSTRAP.md', 'index.md', 'log.md'])
+const META = new Set(['MEMORY.md', 'index.md', 'log.md'])
 
 function resolveStore() {
   if (process.env.MEMORY_DIR) return resolve(process.env.MEMORY_DIR)
@@ -189,7 +189,7 @@ function selfTest() {
   }
   try {
     cmdInit(store, [])
-    check('init creates scaffold', existsSync(join(store, 'SOUL.md')) && existsSync(join(store, 'index.md')))
+    check('init creates scaffold', existsSync(join(store, 'MEMORY.md')) && existsSync(join(store, 'index.md')))
     const created = ensureMemoryScaffold(store)
     check('init is idempotent', created.length === 0)
     writeFileSync(join(store, 'user', 'profile.md'),
@@ -209,7 +209,8 @@ function selfTest() {
     const savedEnv = process.env.MEMORY_DIR
     process.env.MEMORY_DIR = join(restore, '.memory')
     cmdUnpack(resolveStore(), archive, true)
-    check('unpack restores files', existsSync(join(restore, '.memory', 'SOUL.md')) && existsSync(join(restore, '.memory', 'user', 'profile.md')))
+    check('unpack restores files', existsSync(join(restore, '.memory', 'MEMORY.md')) && existsSync(join(restore, '.memory', 'identity')))
+    check('scaffold carries no persona files', !existsSync(join(store, 'SOUL.md')) && !existsSync(join(store, 'BOOTSTRAP.md')))
     if (savedEnv === undefined) delete process.env.MEMORY_DIR
     else process.env.MEMORY_DIR = savedEnv
     rmSync(dir, { recursive: true, force: true })

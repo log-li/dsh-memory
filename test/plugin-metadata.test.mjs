@@ -174,13 +174,7 @@ test('registers the config route and GET serves the resolved config', async () =
     registerSkill: true,
     registerTools: true,
     indexBootMode: 'derive',
-    autoMemory: false,
-    deferUntilUserSpeaks: true,
-    activeSessionOnly: true,
-    recallEnabled: true,
-    recallIntervalMinMinutes: 30,
-    recallIntervalMaxMinutes: 240,
-    recallMaxPerSession: 3,
+    autoMemory: true,
   })
   dispose()
 })
@@ -241,7 +235,7 @@ test('automemory route reports and pauses the active session; 409 without one', 
   // No live session at all: the panel can read, but there is nothing to pause.
   let result = await routeCall(route, 'GET')
   assert.equal(result.status, 200)
-  assert.deepEqual(JSON.parse(result.body), { enabled: false, sessionId: null, paused: false })
+  assert.deepEqual(JSON.parse(result.body), { enabled: true, sessionId: null, paused: false })
   result = await routeCall(route, 'POST', JSON.stringify({ paused: true }))
   assert.equal(result.status, 409)
   assert.match(JSON.parse(result.body).error, /no active memory session/)
@@ -249,29 +243,31 @@ test('automemory route reports and pauses the active session; 409 without one', 
   // A live root agent registers its session; speaking in it makes it "active"
   // (the same proxy the injection gates use).
   const sessionId = 'session-automemory'
-  const inboxListeners = []
+  const agentCleanups = []
   const agent = {
     id: 'agent-a',
     session: { id: sessionId },
     ctx: {
-      on: (name, callback) => {
-        if (name === 'agent/inbox/inserted') inboxListeners.push(callback)
-        return () => {}
+      on: () => () => {},
+      effect: (fn) => {
+        const cleanup = fn()
+        if (typeof cleanup === 'function') agentCleanups.push(cleanup)
+        return cleanup
       },
-      effect: (fn) => fn(),
     },
   }
   ctx.agents.roots = () => [agent]
-  // The tracker skips agents the registry no longer holds, so the fake registry
-  // has to admit this one.
-  ctx.agents.get = (id) => (id === 'agent-a' ? agent : undefined)
-  // Every per-agent wiring (activity tracker, guards, automemory) subscribes here.
+  // Every per-agent wiring (automemory included) subscribes here.
   for (const entry of handlers.filter((candidate) => candidate.name === 'agent/created')) entry.listener({ agent })
-  for (const callback of inboxListeners) callback({ message: { source: { kind: 'user' } } })
+  // The pause button targets "the session the user is talking to": the plugin
+  // resolves it from real user messages on the session event stream.
+  for (const entry of handlers.filter((candidate) => candidate.name === 'session/event')) {
+    entry.listener({ id: sessionId }, { type: 'user/message', data: { source: { kind: 'user' } } })
+  }
 
   result = await routeCall(route, 'GET')
   assert.equal(result.status, 200)
-  assert.deepEqual(JSON.parse(result.body), { enabled: false, sessionId, paused: false })
+  assert.deepEqual(JSON.parse(result.body), { enabled: true, sessionId, paused: false })
 
   result = await routeCall(route, 'POST', JSON.stringify({ paused: 'yes' }))
   assert.equal(result.status, 400)
@@ -281,11 +277,17 @@ test('automemory route reports and pauses the active session; 409 without one', 
 
   result = await routeCall(route, 'POST', JSON.stringify({ paused: true }))
   assert.equal(result.status, 200)
-  assert.deepEqual(JSON.parse(result.body), { enabled: false, sessionId, paused: true })
+  assert.deepEqual(JSON.parse(result.body), { enabled: true, sessionId, paused: true })
   result = await routeCall(route, 'GET')
   assert.equal(JSON.parse(result.body).paused, true, 'the pause is remembered for this session')
   result = await routeCall(route, 'POST', JSON.stringify({ paused: false }))
   assert.equal(JSON.parse(result.body).paused, false)
+
+  // Disposing the agent prunes its automemory instance, its pause and the
+  // session-activity counter: the button then reports "no session".
+  for (const cleanup of agentCleanups) cleanup()
+  result = await routeCall(route, 'GET')
+  assert.deepEqual(JSON.parse(result.body), { enabled: true, sessionId: null, paused: false })
   dispose()
 })
 
@@ -411,11 +413,10 @@ test('hot edit: memoryDir re-points the boot injection and the skill', async () 
   const route = routes.get(CONFIG_ROUTE_PATH)
 
   const otherDir = mkdtempSync(join(tmpdir(), 'dsh-memory-other-'))
-  writeFileSync(join(otherDir, 'SOUL.md'), '# soul\n')
+  writeFileSync(join(otherDir, 'MEMORY.md'), '# MEMORY\n')
+  // CFG.memoryDir has no boot file at all (its SOUL.md is no longer injected by
+  // default), so the first step may legitimately inject nothing.
   const before = await runPreStep(handlers, undefined)
-  // `otherDir` is not configured yet, but the first store (CFG.memoryDir) only
-  // has a placeholder SOUL.md written by an earlier test run: the injection
-  // either talks about the old dir or about nothing at all.
   if (before.messages.length > 0) assert.ok(before.messages.at(-1).content[0].text.includes(CFG.memoryDir))
 
   const result = await routeCall(route, 'POST', JSON.stringify({ memoryDir: otherDir }))
@@ -425,5 +426,53 @@ test('hot edit: memoryDir re-points the boot injection and the skill', async () 
   assert.ok(after.messages.at(-1).content[0].text.includes(otherDir))
   const skillCall = calls.filter(([service]) => service === 'skills').at(-1)[1]
   assert.deepEqual(skillCall.resourceBase, { kind: 'directory', path: otherDir })
+  dispose()
+})
+
+test('legacy keys in memory.json are ignored, and the next save drops them', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'dsh-memory-legacy-'))
+  const configPath = join(dir, 'memory.json')
+  const memoryDir = join(dir, 'store')
+  // A v0.7-era file: the removed persona keys must be inert, not fatal.
+  writeFileSync(configPath, JSON.stringify({
+    enabled: true,
+    memoryDir,
+    deferUntilUserSpeaks: false,
+    activeSessionOnly: false,
+    recallEnabled: true,
+    recallIntervalMinMinutes: 5,
+    digestNudgeEnabled: true,
+    digestNudgeAfterMinutes: 1,
+  }))
+
+  const { ctx, injects } = makeFakeCtx()
+  const dispose = plugin(ctx, { memoryDir, configFile: configPath, scaffold: false })
+  const routes = new Map()
+  injectCallback(injects, 'webServer')({
+    webServer: {
+      register(route) {
+        routes.set(route.path, route)
+        return () => routes.delete(route.path)
+      },
+    },
+    effect: () => () => {},
+  })
+  const route = routes.get(CONFIG_ROUTE_PATH)
+
+  const before = JSON.parse((await routeCall(route, 'GET')).body)
+  assert.deepEqual(Object.keys(before).sort(), [
+    'autoInject', 'autoMemory', 'enabled', 'indexBootMode', 'memoryDir', 'registerSkill', 'registerTools',
+  ])
+  assert.equal(before.autoMemory, true, 'the new default applies even when the file predates it')
+
+  // One panel write rewrites the file without the legacy keys.
+  const after = await routeCall(route, 'POST', JSON.stringify({ autoMemory: false }))
+  assert.equal(after.status, 200)
+  const persisted = JSON.parse(readFileSync(configPath, 'utf8'))
+  assert.deepEqual(Object.keys(persisted).sort(), Object.keys(before).sort())
+  assert.equal(persisted.autoMemory, false)
+  assert.equal(persisted.recallEnabled, undefined)
+  assert.equal(persisted.digestNudgeEnabled, undefined)
+  assert.equal(persisted.deferUntilUserSpeaks, undefined)
   dispose()
 })

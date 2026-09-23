@@ -1,11 +1,11 @@
 # 记忆迁移指南
 
-记忆的价值在于**不被锁死在某个环境里**。@log.li/dsh-memory 的记忆库是纯 markdown + git + 自描述 schema（`SOUL.md` / `MEMORY.md` / `BOOTSTRAP.md`），任何能读 markdown 的 agent 都能接手。本指南覆盖三种迁移场景。
+记忆的价值在于**不被锁死在某个环境里**。@log.li/dsh-memory 的记忆库是纯 markdown + git + 自描述 schema（`MEMORY.md` / `index.md` / `log.md` + 分类页），任何能读 markdown 的 agent 都能接手。本指南覆盖三种迁移场景。
 
 ## 原则
 
 1. **数据是主角，插件是配角**：迁移对象是记忆库目录，不是插件配置。
-2. **自描述 schema 是交接文档**：新 agent 读一遍 `SOUL.md` + `MEMORY.md` 就学会了这套记忆怎么用。
+2. **自描述 schema 是交接文档**：新 agent 读一遍 `MEMORY.md`（协议）+ `index.md`（目录）就学会了这套记忆怎么用。
 3. **降级兼容**：目标环境能力越弱，注入的档位越低（见下），但格式不变。
 
 ## 场景一：同一台机器，换 agent / 换前端
@@ -60,13 +60,13 @@ git push -u origin main
 | 档位 | 适用环境 | 做法 |
 |---|---|---|
 | **全量** | 装了 @log.li/dsh-memory 的 DSH | 整个目录 + `memoryDir` 配置，boot 自动注入 |
-| **标准** | 任意能读文件的 agent（Claude Code / Codex / OpenCode…） | 拷贝目录，把 `SKILL.md` 级协议（见 `skills/memory.md`）放到目标环境的技能目录，boot 手动读 `SOUL.md` + `MEMORY.md` + `index.md` |
+| **标准** | 任意能读文件的 agent（Claude Code / Codex / OpenCode…） | 拷贝目录，把 `SKILL.md` 级协议（见 `skills/memory.md`）放到目标环境的技能目录，boot 手动读 `MEMORY.md` + `index.md` |
 | **精简** | 只有 system prompt 的环境 | 把 `index.md` + 高频页压成一段摘要，贴进 system prompt |
-| **最低配** | 只有一小段 prompt 的环境 | 只贴 `SOUL.md` + `index.md` 摘要——人格与目录恢复了，记忆就"活了"大半 |
+| **最低配** | 只有一小段 prompt 的环境 | 只贴 `MEMORY.md` 摘要 + `index.md` 热页——协议与目录恢复了，记忆就"活了"大半 |
 
 ## 迁移后检查清单
 
-- [ ] `SOUL.md` / `MEMORY.md` / `index.md` / `log.md` 四个核心文件完整
+- [ ] `MEMORY.md` / `index.md` / `log.md` 三个核心文件完整（老库里若还有 `SOUL.md`/`BOOTSTRAP.md`，它们只是普通页面，不影响迁移）
 - [ ] `index.md` 里的链接在新位置全部可解析（`dsh-memory lint`）
 - [ ] `log.md` 条目仍可 `grep '^## \['` 解析
 - [ ] frontmatter 字段名与 `MEMORY.md` 约定一致

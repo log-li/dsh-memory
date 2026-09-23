@@ -92,7 +92,7 @@ function makeAgent(dir, session, llm, config = {}) {
     }),
     getMemoryDir: () => dir,
     isPaused: () => config.paused === true,
-    tracker: { shouldInject: () => config.active !== false },
+    isRoot: () => config.active !== false,
     logger: { info() {}, warn() {} },
   })
   instance.start()
@@ -221,7 +221,7 @@ test('an existing page is updated through the version check, never blind-written
   }
 })
 
-test('guardrails: pause, session cap, turn spacing, activity and the agent digest', async () => {
+test('guardrails: pause, session cap, turn spacing, root-session rule and the agent digest', async () => {
   const dir = makeStore()
   try {
     const llm = makeLlm(['{"remember":false}'])
@@ -229,8 +229,8 @@ test('guardrails: pause, session cap, turn spacing, activity and the agent diges
     const paused = makeAgent(dir, makeSession('paused'), llm, { paused: true })
     assert.equal(paused.instance.eligibility().reason, 'paused for this session')
 
-    const inactive = makeAgent(dir, makeSession('inactive'), llm, { active: false })
-    assert.equal(inactive.instance.eligibility().reason, 'session not active')
+    const subagent = makeAgent(dir, makeSession('subagent'), llm, { active: false })
+    assert.equal(subagent.instance.eligibility().reason, 'not a root session')
 
     const short = makeAgent(dir, makeSession('short', 1), llm)
     assert.equal(short.instance.eligibility().reason, 'transcript too small')

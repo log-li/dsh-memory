@@ -2,7 +2,7 @@ Status: active
 
 # dsh-memory（fork）：把记忆注入层改成 CC 式
 
-- **创建于**: 2026-09-23 · **最近更新**: 2026-09-23（§5 改造点 (a)(b)(c) 已实现并落测试；§10 覆盖清单同步）
+- **创建于**: 2026-09-23 · **最近更新**: 2026-09-23（§5 改造点 (a)(b)(c)(d) 已实现；(e) 去 CC 化残留：铸魂/主动追忆/防懒提醒/两道礼貌闸门全部删除，automemory 改为默认开）
 - **上游**: [`LittleBlackTong/dsh-plugin-memory`](https://github.com/LittleBlackTong/dsh-plugin-memory) v0.6.0（MIT）
 - **本仓库**: `log-li/dsh-memory`（`origin` = 本 fork，`upstream` = 上游）
 - **本机宿主**: `@deepseek-ai/dsh 0.1.5-rc.1`（peer 范围见 §6）
@@ -11,7 +11,9 @@ Status: active
 
 ## 0. 一句话
 
-上游把**记忆库本体**（markdown + git + 自描述 schema）做得很好，本 fork **只改注入与检索层**，让它对齐 Claude Code 的范式：**常驻的只有"规则 + 一行索引"，正文一律按需取**。数据面（`<memoryDir>/*`）与配置面（`memory.json`、settings 命名空间）**保持 100% 兼容——换装不迁移、不丢记忆**。
+上游把**记忆库本体**（markdown + git + 自描述 schema）做得很好，本 fork **只改注入与检索层**，让它对齐 Claude Code 的范式：**常驻的只有"规则 + 一行索引"，正文一律按需取**。数据面（`<memoryDir>/*`）**保持 100% 兼容——换装不迁移、不丢记忆**；配置面在 v0.8.0 **主动收窄**（删掉与 CC 范式冲突的四组键，见 §5.5）。
+
+**v0.8.0 的定位修订**：v0.7.0 之前本 fork 只做"注入层改造"，仍保留上游的 persona 侧特性（铸魂、主动追忆、催记提醒、礼貌闸门）。这些不是 CC 的行为——CC 的记忆是**稳定、安静、按需**的：不主动开口、不催、不挑会话。因此 v0.8.0 把它们**整体删除**，并把 automemory 改为默认开（静默抽取取代催记）。
 
 ## 1. 为什么 fork（2026-09-23 调研判据）
 
@@ -30,8 +32,9 @@ Status: active
 
 **非目标**
 - 不改记忆库格式（不引入向量库、不改成 SQLite）——纯 markdown + git 是本项目与 CC 的共同护城河。
-- 不改 SOUL 铸魂流程、不改 `deferUntilUserSpeaks` / `activeSessionOnly` 两道闸门语义。
 - 不追求"运行时检索替代索引"：索引仍是"我知道有哪些页"的地图。
+- **不做 persona 侧行为**（v0.8.0 起）：铸魂对话、主动追忆、催记提醒、按会话状态挑注入——这些属于"拟人化"，与 CC 记忆范式无关，全部删除（见 §5.5）。
+- 不为上游保留"配置面兼容"：删除的键在 `memory.json` 里被忽略（不报错），下次写配置时自然消失。
 
 ## 3. 现状机制（上游 0.6.0，本机实测）
 
@@ -40,13 +43,13 @@ Status: active
 | 记忆库 | `<memoryDir>`（默认 `~/.dsh/memory`）：`SOUL.md` 人格 / `MEMORY.md` 协议 / `index.md` 目录 / `log.md` 时间线 / `bootstrap` / 分类页 | `lib/scaffold.js` |
 | **boot 注入** | 本 fork：`agent/pre-step` 贡献一条 plugin 消息，块渲染成命名段落、按段落增量重发（`lib/injector.js`）；`perFile = floor(bootMaxChars / bootFiles.length)` 逐段落截断 | `lib/boot.js`（`renderBootParts`/`renderBootBlock`）、`lib/injector.js`、`lib/index.js` |
 | **检索工具** | 本 fork：`memory_search` / `memory_read` / `memory_write`（宿主 registry 手写定义 + 包内参数校验） | `lib/tools.js`、`lib/pages.js`、`lib/tool-schema.js` |
-| 注入闸门 | `deferUntilUserSpeaks`（用户开口才注入）、`activeSessionOnly`（只注入当前激活会话） | `lib/activity-tracker.js` |
+| ~~注入闸门~~ | v0.8.0 删除（连同 `lib/activity-tracker.js`）：注入是会话的稳定组成部分，不再按"用户是否开口/是否激活"忽有忽无 | — |
 | 写入（上游） | **无专用工具**：模型按内嵌技能约定写文件 + 手工同步 `index.md`；`autocommit` 做 git 提交 | `skills/memory.md`、`lib/autocommit.js` |
 | 写入（本 fork） | `memory_write` 两步写入：查重 + `ifVersion` + 自动 `index.md` 一行 + 派生重生成 + 触发提交 | `lib/tools.js`、`lib/pages.js` |
-| 催记 / 追忆 | `digest-guard`（久未写→nudge）、`recall-nudge`（空闲→主动提往事） | `lib/digest-guard.js`、`lib/recall-nudge.js` |
+| ~~催记 / 追忆~~ | v0.8.0 删除：CC 不打断对话——抽取由 automemory 静默完成 | — |
 | 检索 | CLI `dsh-memory search/lint/status/pack/unpack`（需 bash）+ 模型直接 `read` | `scripts/memory.mjs` |
-| 设置 | 10 项热改（`enabled`/`memoryDir`/`autoInject`/两道闸门/`registerSkill`/`recall*`），存 `<dshHome>/memory.json` | `lib/config-store.js`、`lib/client.js` |
-| 测试 | 10 个 `node --test` 文件（100 条）+ `memory.mjs --self-test` | `test/`、`package.json` scripts |
+| 设置 | v0.8.0 面板 8 项热改（`enabled`/`memoryDir`/`autoInject`/`indexBootMode`/`registerSkill`/`registerTools`/`autoMemory`），存 `<dshHome>/memory.json` | `lib/config-store.js`、`lib/client.js` |
+| 测试 | v0.8.0：`node --test` 8 个文件 84 条；`memory.mjs --self-test` | `test/`、`package.json` scripts |
 
 ## 4. 与 Claude Code 的差距（实测，作为改造依据）
 
@@ -123,10 +126,29 @@ boot 块渲染为**命名段落**（`header` / `soul-directive` / 每个 boot �
 
 （未做取舍：面板暂停按会话 id 记在内存里，进程重启即清零——这是有意的：暂停是「别在这个会话里自作主张写」的临时意愿，不是持久配置。）
 
+### 5.5 (e) 去 CC 化残留：删掉 persona 侧四组特性 —— **已实现（v0.8.0）**
+
+**用户决定（2026-09-23，原话：铸魂"这个就不等同呀"）**：把这些从代码里**彻底删除**（不是加开关）：
+
+| 删除项 | 原状 | 为什么与 CC 不等同 | 连带动作 |
+|---|---|---|---|
+| **(1) 铸魂 / SOUL** | `SOUL_DIRECTIVE` 引导词（首轮注入，330 字符）、`needsSoulBootstrap()`、`BOOTSTRAP.md` 状态解析、`soul-directive` 注入段落、`scaffold` 的 `SOUL.md`/`BOOTSTRAP.md` 模板、技能里"开机首要任务"、`bootFiles` 默认含 `SOUL.md` | CC 没有"开机先给 agent 起名"这一步；它会让新会话**先干用户的活** | 删除常量/判定/段落/模板/技能段落/文档/测试；`bootFiles` 默认改为 `[MEMORY.md, index.md]`。**记忆库里已存在的 `SOUL.md`/`BOOTSTRAP.md` 是用户数据，不动**（仍是普通页面，可检索/可读/可写） |
+| **(2) 主动追忆 recall-nudge** | 空闲时以第一人称主动提起往事（`recallEnabled` 等 4 键，默认开） | CC 不在对话里主动塞内容 | 删 `lib/recall-nudge.js` + 测试 + 配置键 + 面板两行 |
+| **(3) 防懒提醒 digest-guard** | 记忆库久未写 → 注入"该 digest 了"（`digestNudge*` 4 键，默认开） | CC 不催促：抽取由 automemory 静默完成 | 删 `lib/digest-guard.js` + 测试 + 配置键；"收尾沉淀"仍由 boot 规则段 + 技能协议约束（模型侧义务不变） |
+| **(4) 两道礼貌闸门** | `deferUntilUserSpeaks`（开口前不注入）、`activeSessionOnly`（只注入激活会话），靠 `lib/activity-tracker.js` | CC 的记忆是**稳定组成部分**，不随会话状态忽有忽无 | 删 `lib/activity-tracker.js` + 测试 + 配置键 + 面板两行；`lib/injector.js` 不再读注入闸门 |
+
+**两条同时拍板的决定**：
+- **automemory 改为默认开**（`autoMemory: true`）：静默抽取取代催记提醒——这是删掉 digest-guard 的前提。代价（模型调用）写进 README，随时可在面板关掉；每会话限次（默认 2）与轮间隔（默认 3 轮）不变。
+- **结构性规则（不是闸门）：只为 root 会话注入/抽取**——子代理是临时工，不读也不写长期记忆。删掉 tracker 后这条改由 `ctx.agents.roots()` 判定（`isRoot` 谓词传给注入器与 automemory），因此子代理会话不会因为"闸门消失"而拿到整块记忆。
+
+**保留（不删）**：索引分层与热页子集、条目级增量注入、三个工具、automemory、salience 三级、git 自动提交（`autoCommit*`）、CLI 与迁移文档、设置面板与自建配置路由（删的是其中 persona 相关的行）。理由见 §5.5 的取舍记录：前四项是 CC 等价物；git/CLI/面板在运行时零成本，砍了只丢工具。
+
+**面板的会话解析（保留）**：`autoMemory` 的「本次会话暂停自动记忆」仍需知道"用户在看哪个会话"。删掉 activity-tracker 后由插件内一个**极小的计数器**（记录每个会话最近一次真实用户消息的次序）解析，**只服务这个按钮**，不参与任何注入判定。
+
 ## 6. 约束（硬）
 
 1. **数据面不动**：`<memoryDir>` 目录结构、`MEMORY.md`/`index.md` 格式、`log.md` 条目格式**保持上游兼容**（老库直接可用；新派生文件必须可删可重建）。
-2. **配置面不动**：`<dshHome>/memory.json` 的既有键语义不变；新增键必须有安全默认值。
+2. **配置面：保留键语义不变，删除键被忽略**（v0.8.0 修订）：`enabled`/`memoryDir`/`autoInject`/`registerSkill`/`autoCommit*`/`scaffold`/`configFile` 语义不变；**已删除** `recall*`、`digestNudge*`、`deferUntilUserSpeaks`、`activeSessionOnly`——`memory.json` 里残留的这些键被 `pickFields` 白名单忽略（**不报错**），下次从面板写配置时自然被抹掉。新增键必须有安全默认值。
 3. **命名一致**：包名 `@log.li/dsh-memory` 必须与 profile `dependencies` 键、`dsh.profile.bundles` 项、`cordis.patch.yml` 的 `insert.name` **四处一致**（本机踩过：`insert.name` 是 ESM 包解析名，不一致即启动崩）。
 4. **peer 范围**：`@deepseek-ai/dsh-*` 保持 `^0.1.2-alpha.1` 起；**升级到 0.1.6+ 前必须先实测**（Session v4、settings 迁移等破坏性变更）。
 5. **测试不退化**：`npm test`（`--self-test`）与 `npm run test:plugin`（7 个文件）全绿是提交前提；新增行为必须带测试。
@@ -189,6 +211,15 @@ boot 块渲染为**命名段落**（`header` / `soul-directive` / 每个 boot �
 - **改名（2026-09-23）**：包解析自 `link:` 路径、`insert.name` == 包名、client bundle 可组合、boot 块模型可见面为新名、全仓无旧名残留。
 - **内置索引分层 / 检索工具（已实现，见下）**：boot 增量对照（记忆不变不重发、改一页只重发变化段）；`memory_search → read → write` 闭环（含 `index.md` 一行更新与 `git log` 提交）。
 - **可选 automemory（已实现，L10）**：两阶段抽取 → 走同一写入引擎 → 下一轮增量注入接住；护栏（会话限次/轮间隔/agent 自己写过就让位/失败不打断）逐条断言。
+
+### ① 追加：v0.8.0 去 persona 残留的判据
+
+| # | 链 | 判据 |
+|---|---|---|
+| L11 | **注入块无 persona 残留** | 真实会话读回注入全文：不含「铸魂」「首要任务」「SOUL.md」段落；即使库里存在 `SOUL.md`/`BOOTSTRAP.md` 也不进常驻块（默认 `bootFiles` 不含它） |
+| L12 | **空库不再起名** | 指向一个**全新空目录**的隔离实例：首轮注入只有规则段 + 空库提示，**没有**引导词、没有"我该叫什么名字" |
+| L13 | **子代理不被注入** | 同一实例里子代理会话的模型可见请求**不含**本插件的整块记忆（`isRoot` 结构性规则），主会话照常 |
+| L14 | **automemory 默认开** | 不设 `autoMemory` 的新配置下，轮末仍出现 classify/extract 调用并落盘（默认值改动的活体证据） |
 
 ### 当前状态（必须与事实一致）
 
@@ -262,3 +293,25 @@ boot 块渲染为**命名段落**（`header` / `soul-directive` / 每个 boot �
 | 9 | 【测试缺口】automemory 写库不主动触发 commit（依赖 60s 静默窗的 AutoCommitter） | 属实且**有意**：automemory 是"静默路径"，不该在轮末同步跑 git；`memory_write`（模型显式写）才主动触发 | **登记（行为保留）**：spec §5.4 写明该取舍 |
 
 - 修正后：`node --test` 119 条全绿、`--self-test` 通过；automemory 链在隔离实例**重跑通过**——三轮会话复现同一结果（classify/extract 各 2 次、页面/index/log 落盘、第三轮首个请求出现第二条 notice），真机记忆库 `git status` 干净（隔离未被击穿）。
+
+### v0.8.0-fork（2026-09-23）去 persona 残留（§5.5）
+- 用户决定"铸魂不等同 CC"，选 **B（彻底删除）**，并追加砍掉 ①主动追忆 ②防懒提醒 ③两道礼貌闸门；同时拍板 **automemory 默认开**、**`bootFiles` 默认去掉 `SOUL.md`**。
+- 删除：`lib/activity-tracker.js`、`lib/digest-guard.js`、`lib/recall-nudge.js` 及其测试（3 个模块 + 3 个测试文件，1314 行测试全删）；共删 **10 个配置键**（2 闸门 + 4 digest + 4 recall）；`lib/boot.js` 的 `SOUL_DIRECTIVE`/`needsSoulBootstrap()`/`readBootstrapStatus()`/`soul-directive` 段落；`lib/scaffold.js` 的 `SOUL.md`/`BOOTSTRAP.md` 模板；技能正文的铸魂段落；面板四行与 11 个配置键（含 schema/config-store/README/CHANGELOG）。
+- 新增结构性规则：**只为 root 会话注入/抽取**（`isRoot` 谓词，替代被删的两道闸门对子代理的隐含拦截）；面板「本次会话暂停自动记忆」改由插件内极小计数器解析当前会话（不参与注入判定）。
+- 数据面不动：记忆库里已有的 `SOUL.md`/`BOOTSTRAP.md` 保持原样，仍是可检索/可读写的普通页面。
+
+### review 处置记录（2026-09-23，独立模型家族审查 v0.8.0 去 persona 变更集）
+
+| # | review 说法 | 我的核验 | 处置 |
+|---|---|---|---|
+| 1 | 【中等】`skills/memory.md` 仍写「automemory（可选，默认关）」与「收到插件注入的 digest 提醒立即执行」——该提醒已不存在 | 属实（模型每次都能读到，属"文档骗模型"） | **采纳**：改为「automemory（默认开）」+ 删掉提醒条款、保留收尾义务；skill 测试补三条负向断言（无「digest 提醒」/「解除提醒」/「默认关」） |
+| 2 | 【中等】`lib/scaffold.js` 的 `MEMORY.md` 模板硬规则仍承诺提醒机制（写进每个新库的用户数据） | 属实 | **采纳**：模板改为「收尾前做沉淀，确无内容记一条「无新增」」 |
+| 3 | 【中等】README 四处与自身配置表矛盾（tagline 带「灵魂」、三处 automemory「默认关」、"当前激活会话"旧词） | 属实 | **采纳**：tagline/特性行/架构注释/路线图/面板段全部改写，措辞改为「最近在说话的那个会话」 |
+| 4 | 【中等】残留键「被忽略 + 下次保存消失」这条硬约束**零测试** | 属实 | **采纳**：新增插件级测试（造 v0.7 版 `memory.json` → 加载成功 → GET 恰为 7 键且 `autoMemory` 取新默认 → 一次面板写后旧键从文件消失） |
+| 5 | 【轻微】`package.json` description 仍写 soul/persona（npm 公开面）、`cordis.patch.yml` 注释列已删键为热改键、`lib/index.js` 模块注释「bootstrap soul-definition」、`lib/injector.js` 注释解释已删模块 | 属实 | **采纳**：四处全部改写 |
+| 6 | 【轻微】`lastUserMessageOrder` 随会话只增不减 | 属实（量小） | **采纳**：agent 处置时删除该会话的实例 + 暂停 + 计数三项；测试补「处置后按钮回到 no session」断言 |
+| 7 | 【轻微】`isRoot` 在 `roots()` 抛错时 fail-open（子代理可能被注入） | 属实 | **部分采纳（拒绝改行为）**：该规则是防噪声不是防损坏，失败时"整个会话没有记忆"比"子代理多看一块"更糟；改为**显式注释说明 fail-open 是刻意选择**（不改成 fail-closed） |
+| 8 | 【轻微】计数漂移：测试文件 7→8、删键 11→10、全绿 82→83 | 属实 | **采纳**：AGENTS.md / spec §6 表格 / CHANGELOG 双语条目 / 变更历史全部校正（本轮为 8 文件 84 条） |
+| 9 | 【测试缺口】`isRoot` 与真实 `ctx.agents.roots()` 的接线只有假谓词；L13 端到端未跑 | 属实 | **登记**：宿主源码已核（`roots()` = `owner === undefined`，子代理必被排除），真实宿主里已用探针确认 `roots()=1 / mainIsRoot=true`；**真实子代理会话未构造**，如实记为 L13 未跑 |
+
+- 修正后：`node --test` **8 文件 84 条**全绿、`--self-test` PASS；注入块文本已在 v0.8.0 的隔离 E2E 里读回核对（本轮仅改文案与计数，未再动注入路径）。

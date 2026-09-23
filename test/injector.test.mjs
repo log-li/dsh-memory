@@ -72,8 +72,8 @@ function makeInjector(dir, options = {}) {
   return new BootInjector({
     getMemoryDir: () => dir,
     getBootOptions: () => ({ bootFiles: ['SOUL.md', 'MEMORY.md', 'index.md'], bootMaxChars: 4000, indexBootMode: 'derive' }),
-    getGates: () => ({ enabled: true, autoInject: true, deferUntilUserSpeaks: false, activeSessionOnly: false }),
-    tracker: options.tracker,
+    getGates: () => ({ enabled: true, autoInject: true }),
+    isRoot: options.isRoot,
     logger: { info() {}, warn() {} },
     pluginName: 'memory',
   })
@@ -288,18 +288,22 @@ test('a step that never committed its injection re-injects instead of drifting',
   }
 })
 
-test('gates and a missing store suppress injection entirely', async () => {
+test('the master switch, subagent sessions and a missing store suppress injection', async () => {
   const dir = makeStore()
   try {
-    const gated = new BootInjector({
+    // Subagents are ephemeral workers: the structural root rule keeps them out.
+    const subagent = new BootInjector({
       getMemoryDir: () => dir,
       getBootOptions: () => ({}),
       getGates: () => ({ enabled: true, autoInject: true }),
-      tracker: { shouldInject: () => false },
+      isRoot: () => false,
       logger: { info() {}, warn() {} },
       pluginName: 'memory',
     })
-    assert.equal(await step(gated, makeSession('gated')), undefined)
+    assert.equal(await step(subagent, makeSession('sub')), undefined)
+
+    const root = makeInjector(dir, { isRoot: () => true })
+    assert.equal((await step(root, makeSession('root'))).source.form, 'snapshot')
 
     const disabled = new BootInjector({
       getMemoryDir: () => dir,

@@ -14,21 +14,19 @@ test('memory skill ships its protocol body', () => {
   assert.match(content, /digest/)
 })
 
-test('memory skill explains soul bootstrap and the boot-directive trigger', () => {
-  const content = memorySkillContent()
-  // Fresh store → the boot block carries the first-person directive, so the
-  // agent opens the soul-definition conversation on its own (OpenClaw-init
-  // style). The skill must tell it to follow that directive.
-  assert.match(content, /铸魂阶段/)
-  assert.match(content, /引导词/)
-  assert.match(content, /主动发起铸魂/)
-  // Fallback path: no directive but BOOTSTRAP not complete → still the top task.
-  assert.match(content, /BOOTSTRAP\.md/)
-  assert.match(content, /首要任务/)
-})
-
 test('skill metadata stays consistent', () => {
+  const content = memorySkillContent()
   assert.equal(MEMORY_SKILL_NAME, 'memory')
   assert.match(MEMORY_SKILL_DESCRIPTION, /digest/)
   assert.match(MEMORY_SKILL_WHEN_TO_USE, /会话开始/)
+  // v0.8.0: the plugin is memory, not a persona — no soul/bootstrap protocol.
+  assert.ok(!/SOUL\.md/.test(content), 'no SOUL.md protocol left in the skill')
+  assert.ok(!/首要任务/.test(content), 'no first-task instruction left')
+  // v0.8.0 removed the digest reminder: the protocol must not promise one.
+  assert.ok(!/digest 提醒/.test(content), 'no promise of a removed reminder')
+  assert.ok(!/解除提醒/.test(content), 'no reminder-clearing instruction')
+  assert.ok(!/automemory（可选，默认关）/.test(content), 'automemory default is on now')
+  assert.ok(!/BOOTSTRAP\.md/.test(content), 'no bootstrap checklist left')
+  assert.match(content, /memory_search/)
+  assert.match(content, /memory_write/)
 })

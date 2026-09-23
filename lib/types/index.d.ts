@@ -10,7 +10,7 @@ import type { Context } from '@deepseek-ai/cordis'
 export const name: 'memory'
 
 /** Services required by the plugin. */
-export const inject: ['systemPrompt', 'skills', 'agents']
+export const inject: ['skills', 'agents']
 
 /** User-facing plugin configuration (all fields optional). */
 export interface MemoryConfig {
@@ -18,38 +18,40 @@ export interface MemoryConfig {
   enabled?: boolean
   /** Absolute memory-store path; `~` is expanded. Default `'~/.memory'`. */
   memoryDir?: string
-  /** Files injected at session start. Default `['SOUL.md', 'MEMORY.md', 'index.md']`. */
+  /** Files injected at session start. Default `['MEMORY.md', 'index.md']`. */
   bootFiles?: string[]
   /** Total character budget of the boot block. Default `6000`. */
   bootMaxChars?: number
   /** Inject the boot block at session start. Default `true`. */
   autoInject?: boolean
-  /** Don't inject anything until the session's first real user message. Default `true`. */
-  deferUntilUserSpeaks?: boolean
-  /** Only inject for the currently active session (most recent user message). Default `true`. */
-  activeSessionOnly?: boolean
+  /** Catalog boot entries inject the `salience: 1` hot subset. Default `'derive'`. */
+  indexBootMode?: 'off' | 'derive'
   /** Register the embedded `memory` skill. Default `true`. */
   registerSkill?: boolean
+  /** Register `memory_search` / `memory_read` / `memory_write`. Default `true`. */
+  registerTools?: boolean
+  /** Silent end-of-turn extraction through the `memory_write` engine. Default `true`. */
+  autoMemory?: boolean
+  /** Model route for automemory; defaults to the session's own route. */
+  autoMemoryProvider?: string
+  /** Model id for automemory; defaults to the session's own route. */
+  autoMemoryModel?: string
+  /** How many times one session may auto-extract. Default `2`. */
+  autoMemoryMaxPerSession?: number
+  /** Minimum turns between two extractions. Default `3`. */
+  autoMemoryMinTurnsBetweenRuns?: number
+  /** Skip extraction when the transcript is shorter than this. Default `200`. */
+  autoMemoryMinTranscriptChars?: number
+  /** Max pages one extraction may write. Default `3`. */
+  autoMemoryMaxPages?: number
+  /** Max output tokens per automemory call. Default `2000`. */
+  autoMemoryMaxTokens?: number
+  /** Per-call deadline in milliseconds. Default `60000`. */
+  autoMemoryTimeoutMs?: number
   /** Create the store layout and templates when missing. Default `true`. */
   scaffold?: boolean
   /** Absolute user-facing config-file path. Default `<dshHome>/memory.json`. */
   configFile?: string
-  /** Digest guard: inject a reminder when the store goes unwritten too long. Default `true`. */
-  digestNudgeEnabled?: boolean
-  /** Minutes of store inactivity before a digest reminder. Default `120`. */
-  digestNudgeAfterMinutes?: number
-  /** Minimum minutes between digest reminders. Default `180`. */
-  digestNudgeCooldownMinutes?: number
-  /** Max digest reminders per session. Default `2`. */
-  digestNudgeMaxPerSession?: number
-  /** Recall nudge: idle-time first-person recall of a real memory. Default `true`. */
-  recallEnabled?: boolean
-  /** Lower bound (minutes) of the random recall interval. Default `30`. */
-  recallIntervalMinMinutes?: number
-  /** Upper bound (minutes) of the random recall interval. Default `240`. */
-  recallIntervalMaxMinutes?: number
-  /** Max recall nudges per session. Default `3`. */
-  recallMaxPerSession?: number
   /** Auto-commit the store's git history after a quiet period. Default `true`. */
   autoCommit?: boolean
   /** Seconds of quiet before an auto-commit. Default `60`. */
@@ -64,18 +66,24 @@ export const Config: import('@deepseek-ai/schemastery').default<MemoryConfig>
 /** HTTP route serving the user-facing config to the Settings panel. */
 export const CONFIG_ROUTE_PATH: '/api/memory/config'
 
-/** User-editable settings (composition config is the base layer). */
+/** HTTP route answering "is automemory paused for the session I am in?". */
+export const AUTOMEMORY_ROUTE_PATH: '/api/memory/automemory'
+
+/**
+ * User-editable settings (composition config is the base layer).
+ *
+ * Keys removed in v0.8.0 (`recall*`, `digestNudge*`, `deferUntilUserSpeaks`,
+ * `activeSessionOnly`) are ignored when present in `memory.json`, never an
+ * error; the next settings write drops them.
+ */
 export interface MemorySettings {
   enabled?: boolean
   memoryDir?: string
   autoInject?: boolean
-  deferUntilUserSpeaks?: boolean
-  activeSessionOnly?: boolean
+  indexBootMode?: 'off' | 'derive'
   registerSkill?: boolean
-  recallEnabled?: boolean
-  recallIntervalMinMinutes?: number
-  recallIntervalMaxMinutes?: number
-  recallMaxPerSession?: number
+  registerTools?: boolean
+  autoMemory?: boolean
 }
 
 /** Schemastery schema for {@link MemorySettings}. */
@@ -100,7 +108,7 @@ export function resolveMemoryDir(dir: string): string
 export interface MemoryPlugin {
   (ctx: Context, config?: MemoryConfig): () => void
   readonly name: 'memory'
-  readonly inject: ['systemPrompt', 'skills', 'agents']
+  readonly inject: ['skills', 'agents']
   readonly Config: import('@deepseek-ai/schemastery').default<MemoryConfig>
 }
 
@@ -114,23 +122,42 @@ export default plugin
 /** Render the boot memory block injected at session start. */
 export function renderBootBlock(
   memoryDir: string,
-  options?: { bootFiles?: string[]; bootMaxChars?: number },
+  options?: { bootFiles?: string[]; bootMaxChars?: number; indexBootMode?: 'off' | 'derive' },
 ): string
 
 /** Create the memory-store layout if missing. Returns created paths. */
 export function ensureMemoryScaffold(memoryDir: string): string[]
 
 /**
- * Per-agent activity tracker behind the two polite-injection gates
- * (`deferUntilUserSpeaks` + `activeSessionOnly`).
+ * Boot injection with part-level updates (see `lib/injector.js`). Only root
+ * sessions are injected; subagents neither receive nor refresh the block.
  */
-export class ActivityTracker {
-  constructor(options?: { agents?: unknown; logger?: unknown })
-  attach(agent: unknown): void
-  noteUserMessage(id: string): void
-  detach(id: string): void
-  hasUserSpoken(id: string): boolean
-  isActive(id: string): boolean
-  shouldInject(id: string, config?: { deferUntilUserSpeaks?: boolean; activeSessionOnly?: boolean }): boolean
+export class BootInjector {
+  constructor(options: {
+    getMemoryDir: () => string
+    getBootOptions?: () => { bootFiles?: string[]; bootMaxChars?: number; indexBootMode?: 'off' | 'derive' }
+    getGates?: () => { enabled?: boolean; autoInject?: boolean }
+    isRoot?: (agent: unknown) => boolean
+    logger?: { info?: Function; warn?: Function }
+    pluginName?: string
+  })
+  handle(event: unknown, next: () => Promise<unknown>): Promise<unknown>
+  render(agent: unknown): { text: string; form: 'snapshot' | 'notice'; summary?: string } | undefined
+  reset(sessionId?: string): void
   dispose(): void
+}
+
+/** Optional end-of-turn extraction (default ON since v0.8.0). */
+export class AutoMemory {
+  constructor(agent: unknown, options: {
+    readConfig: () => MemoryConfig
+    getMemoryDir: () => string
+    isPaused?: (sessionId: string) => boolean
+    isRoot?: (agent: unknown) => boolean
+    logger?: { info?: Function; warn?: Function }
+  })
+  start(): void
+  dispose(): void
+  eligibility(): { run: boolean; reason: string }
+  maybeRun(): Promise<{ remembered: boolean; reason: string; wrote: number; paths: string[]; called: number } | undefined>
 }

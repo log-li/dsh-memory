@@ -3,39 +3,7 @@ import assert from 'node:assert/strict'
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { renderBootBlock, renderBootParts, needsSoulBootstrap, readBootstrapStatus, SOUL_DIRECTIVE } from '../lib/boot.js'
-
-const SOUL_TEMPLATE = `# SOUL — 人格与灵魂
-
-## 身份
-
-- **名字**：_（铸魂对话中确认）_
-`
-
-const SOUL_FILLED = `# SOUL — 人格与灵魂
-
-## 身份
-
-- **名字**：小蓝。
-`
-
-const BOOTSTRAP_PENDING = `---
-status: pending
----
-
-# BOOTSTRAP — 灵魂定义与身份确认
-
-- [ ] 名字与称呼
-`
-
-const BOOTSTRAP_COMPLETE = `---
-status: complete
----
-
-# BOOTSTRAP — 灵魂定义与身份确认
-
-- [x] 名字与称呼
-`
+import { DEFAULT_BOOT_FILES, renderBootBlock, renderBootParts } from '../lib/boot.js'
 
 const INDEX = `# Memory Index\n\n_（暂无）_\n`
 
@@ -45,70 +13,6 @@ function makeStore(files) {
   for (const [name, text] of Object.entries(files)) writeFileSync(join(dir, name), text, 'utf8')
   return dir
 }
-
-test('fresh scaffold (pending + placeholder SOUL) renders the soul directive', () => {
-  const dir = makeStore({
-    'SOUL.md': SOUL_TEMPLATE,
-    'MEMORY.md': '# MEMORY\n',
-    'index.md': INDEX,
-    'BOOTSTRAP.md': BOOTSTRAP_PENDING,
-  })
-  try {
-    assert.equal(needsSoulBootstrap(dir), true)
-    const block = renderBootBlock(dir)
-    // First-person onboarding narration, OpenClaw-init style.
-    assert.match(block, /我的首要任务是确认我是谁/)
-    assert.match(block, /我叫什么名字/)
-    assert.match(block, /我该怎么称呼你/)
-    // The directive sits ahead of the store files.
-    assert.ok(block.indexOf(SOUL_DIRECTIVE) < block.indexOf('### SOUL.md'))
-  } finally {
-    rmSync(dir, { recursive: true, force: true })
-  }
-})
-
-test('souled store (complete + filled SOUL) hides the directive', () => {
-  const dir = makeStore({
-    'SOUL.md': SOUL_FILLED,
-    'MEMORY.md': '# MEMORY\n',
-    'index.md': INDEX,
-    'BOOTSTRAP.md': BOOTSTRAP_COMPLETE,
-  })
-  try {
-    assert.equal(needsSoulBootstrap(dir), false)
-    const block = renderBootBlock(dir)
-    assert.ok(!block.includes('我的首要任务是确认我是谁'))
-    assert.ok(!block.includes(SOUL_DIRECTIVE))
-    assert.match(block, /小蓝/)
-  } finally {
-    rmSync(dir, { recursive: true, force: true })
-  }
-})
-
-test('old store without BOOTSTRAP.md: placeholder SOUL still triggers, filled SOUL does not', () => {
-  const pending = makeStore({ 'SOUL.md': SOUL_TEMPLATE, 'index.md': INDEX })
-  const filled = makeStore({ 'SOUL.md': SOUL_FILLED, 'index.md': INDEX })
-  try {
-    assert.equal(readBootstrapStatus(pending), 'pending')
-    assert.equal(needsSoulBootstrap(pending), true)
-    assert.equal(needsSoulBootstrap(filled), false)
-    assert.ok(!renderBootBlock(filled).includes(SOUL_DIRECTIVE))
-  } finally {
-    rmSync(pending, { recursive: true, force: true })
-    rmSync(filled, { recursive: true, force: true })
-  }
-})
-
-test('missing store: everything reads as needing a soul', () => {
-  const dir = mkdtempSync(join(tmpdir(), 'memory-boot-empty-'))
-  try {
-    assert.equal(needsSoulBootstrap(dir), true)
-    // No injectable files at all → boot block stays empty.
-    assert.equal(renderBootBlock(dir), '')
-  } finally {
-    rmSync(dir, { recursive: true, force: true })
-  }
-})
 
 // ---------------------------------------------------------------------------
 // (a) Built-in index layering: the resident catalog is the hot subset only.
@@ -129,10 +33,8 @@ const CATALOG = `# Memory Index
 
 test('derive mode injects only the salience=1 rows', () => {
   const dir = makeStore({
-    'SOUL.md': SOUL_FILLED,
     'MEMORY.md': '# MEMORY\n',
     'index.md': CATALOG,
-    'BOOTSTRAP.md': BOOTSTRAP_COMPLETE,
   })
   try {
     const block = renderBootBlock(dir, { bootFiles: ['MEMORY.md', 'index.md'], bootMaxChars: 6000 })
@@ -150,10 +52,8 @@ test('derive mode injects only the salience=1 rows', () => {
 
 test("indexBootMode: 'off' injects the catalog literally", () => {
   const dir = makeStore({
-    'SOUL.md': SOUL_FILLED,
     'MEMORY.md': '# MEMORY\n',
     'index.md': CATALOG,
-    'BOOTSTRAP.md': BOOTSTRAP_COMPLETE,
   })
   try {
     const block = renderBootBlock(dir, { bootFiles: ['MEMORY.md', 'index.md'], bootMaxChars: 6000, indexBootMode: 'off' })
@@ -167,10 +67,8 @@ test("indexBootMode: 'off' injects the catalog literally", () => {
 
 test('a catalog with no salience markers falls back to the literal file when it fits', () => {
   const dir = makeStore({
-    'SOUL.md': SOUL_FILLED,
     'MEMORY.md': '# MEMORY\n',
     'index.md': '# Memory Index\n\n- [只有一页](note.md) — 摘要\n',
-    'BOOTSTRAP.md': BOOTSTRAP_COMPLETE,
   })
   try {
     const block = renderBootBlock(dir, { bootFiles: ['MEMORY.md', 'index.md'], bootMaxChars: 6000 })
@@ -183,11 +81,9 @@ test('a catalog with no salience markers falls back to the literal file when it 
 
 test('a configured index.boot.md entry is derived from index.md in place', () => {
   const dir = makeStore({
-    'SOUL.md': SOUL_FILLED,
     'MEMORY.md': '# MEMORY\n',
     'index.md': CATALOG,
     'index.boot.md': '# 过时的外置派生文件\n\n- [旧](stale.md)\n',
-    'BOOTSTRAP.md': BOOTSTRAP_COMPLETE,
   })
   try {
     const block = renderBootBlock(dir, { bootFiles: ['MEMORY.md', 'index.boot.md'], bootMaxChars: 6000 })
@@ -202,10 +98,8 @@ test('a configured index.boot.md entry is derived from index.md in place', () =>
 test('every hot page survives the budget: the resident index is never truncated', () => {
   const rows = Array.from({ length: 40 }, (_, index) => `- [热页 ${index}](decisions/hot-${index}.md) — ${'说'.repeat(60)}（salience 1）`)
   const dir = makeStore({
-    'SOUL.md': SOUL_FILLED,
     'MEMORY.md': '# MEMORY\n',
     'index.md': `# Memory Index\n\n## decisions（决策）\n\n${rows.join('\n')}\n`,
-    'BOOTSTRAP.md': BOOTSTRAP_COMPLETE,
   })
   try {
     const parts = renderBootParts(dir, { bootFiles: ['MEMORY.md', 'index.md'], bootMaxChars: 6000 })
@@ -228,15 +122,13 @@ test('every hot page survives the budget: the resident index is never truncated'
 
 test('boot parts carry stable ids, sources and mtimes', () => {
   const dir = makeStore({
-    'SOUL.md': SOUL_FILLED,
     'MEMORY.md': '# MEMORY\n',
     'index.md': CATALOG,
     'log.md': '## [2026-09-23] decision | 一条\n',
-    'BOOTSTRAP.md': BOOTSTRAP_COMPLETE,
   })
   try {
-    const parts = renderBootParts(dir, { bootFiles: ['SOUL.md', 'MEMORY.md', 'index.md'] })
-    assert.deepEqual(parts.parts.map((part) => part.id), ['header', 'SOUL.md', 'MEMORY.md', 'index.md', 'log.md'])
+    const parts = renderBootParts(dir, { bootFiles: DEFAULT_BOOT_FILES })
+    assert.deepEqual(parts.parts.map((part) => part.id), ['header', 'MEMORY.md', 'index.md', 'log.md'])
     for (const part of parts.parts) {
       assert.ok(part.sources.every((source) => source.startsWith(dir)), 'sources are absolute store paths')
       assert.equal(typeof part.mtimeMs, 'number')
@@ -248,22 +140,42 @@ test('boot parts carry stable ids, sources and mtimes', () => {
   }
 })
 
-test('a store whose soul appears later swaps the directive for the real SOUL part', () => {
+test('persona files are ordinary pages: a present SOUL.md is never injected by default', () => {
   const dir = makeStore({
-    'SOUL.md': SOUL_TEMPLATE,
+    'SOUL.md': '# SOUL — 人格与灵魂\n\n- **名字**：小蓝。\n',
+    'BOOTSTRAP.md': '---\nstatus: pending\n---\n\n# BOOTSTRAP\n',
     'MEMORY.md': '# MEMORY\n',
     'index.md': CATALOG,
-    'BOOTSTRAP.md': BOOTSTRAP_PENDING,
   })
   try {
-    const before = renderBootParts(dir, { bootFiles: ['SOUL.md', 'MEMORY.md', 'index.md'] })
-    assert.ok(before.parts.some((part) => part.id === 'soul-directive'))
+    assert.deepEqual(DEFAULT_BOOT_FILES, ['MEMORY.md', 'index.md'])
+    const parts = renderBootParts(dir, {})
+    assert.deepEqual(parts.parts.map((part) => part.id), ['header', 'MEMORY.md', 'index.md'])
+    assert.ok(!parts.parts.some((part) => part.id === 'soul-directive'), 'no soul directive exists any more')
+    assert.ok(!parts.text.includes('小蓝'), 'a persona file is not resident')
+    assert.ok(!parts.text.includes('人格与灵魂'), 'no persona narration')
+    assert.ok(!parts.text.includes('首要任务'), 'no first-task instruction')
+    // …but a deployment may still list it explicitly (it is just a page then).
+    const explicit = renderBootParts(dir, { bootFiles: ['SOUL.md', 'MEMORY.md'] })
+    assert.deepEqual(explicit.parts.map((part) => part.id), ['header', 'SOUL.md', 'MEMORY.md'])
+  } finally {
+    rmSync(dir, { recursive: true, force: true })
+  }
+})
 
-    writeFileSync(join(dir, 'SOUL.md'), SOUL_FILLED)
-    writeFileSync(join(dir, 'BOOTSTRAP.md'), BOOTSTRAP_COMPLETE)
-    const after = renderBootParts(dir, { bootFiles: ['SOUL.md', 'MEMORY.md', 'index.md'] })
-    assert.ok(!after.parts.some((part) => part.id === 'soul-directive'))
-    assert.ok(after.parts.some((part) => part.id === 'SOUL.md'))
+test('the injected header promises only what exists now (no persona, no reminder)', () => {
+  const dir = makeStore({ 'MEMORY.md': '# MEMORY\n', 'index.md': CATALOG })
+  try {
+    const block = renderBootBlock(dir, {})
+    // v0.8.0 removed the digest reminder: the header must not announce it.
+    assert.ok(!block.includes('digest 提醒'), 'no promise of a removed reminder')
+    assert.ok(!block.includes('人格'), 'no persona framing')
+    assert.ok(!block.includes('不得拖延'), 'no nagging tone')
+    // What it must still say: where the store is, that the index is partial,
+    // and that writing back at session end is the model's own duty.
+    assert.match(block, /记忆库位于/)
+    assert.match(block, /按需取/)
+    assert.match(block, /无新增/)
   } finally {
     rmSync(dir, { recursive: true, force: true })
   }

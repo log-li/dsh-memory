@@ -2,10 +2,12 @@
 #
 # Declared via the `dsh.bundle.patch` manifest in package.json, so
 # `dsh plugin add @log.li/dsh-memory`（本 fork 用 link: 安装，见 README）
-# mounts this insert automatically. User-level overrides — including the
-# hot-editable `enabled` / `memoryDir` / `autoInject` / `deferUntilUserSpeaks`
-# / `activeSessionOnly` / `registerSkill` — live in <dshHome>/memory.json,
-# managed by the settings panel.
+# mounts this insert automatically. User-level overrides — the hot-editable
+# `enabled` / `memoryDir` / `autoInject` / `indexBootMode` / `registerSkill` /
+# `registerTools` / `autoMemory` — live in <dshHome>/memory.json, managed by the
+# settings panel. Composition-only keys (bootFiles, bootMaxChars, autoMemory
+# tuning, autoCommit tuning, configFile, scaffold) go in this profile's patch
+# layer, not in memory.json.
 - insert:
     - id: dsh-memory
       name: '@log.li/dsh-memory'
