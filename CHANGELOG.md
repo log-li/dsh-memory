@@ -1,6 +1,118 @@
 # Changelog
 
+All notable changes to this project are documented here, following [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); versions track `package.json`.
+
+## [0.7.0] - 2026-09-23
+
+### Added
+
+- **`memory_search` / `memory_read` / `memory_write` tools.** Sessions no longer have to remember a CLI incantation: search the store by keyword, read one page's body, and write it back. `memory_write` enforces the store's two-step write (duplicate check + version check), keeps the catalog's one-line row in sync, and commits; a new `registerTools` setting turns all three off.
+- **`indexBootMode: derive` (default).** The resident catalog is now the `salience: 1` hot subset computed from `index.md` on the fly (one row per page, summaries compressed to fit the budget), so it is never truncated and the derived `index.boot.md` file is no longer required. Set it to `off` to inject the catalog verbatim.
+
+### Changed
+
+- **Boot injection is now incremental.** The injected block is built from named parts and the plugin tracks what the session already has: an unchanged store injects nothing at all, and one edited file re-sends only that part ("the parts not listed are unchanged") instead of the whole snapshot. A session resumed in a new process keeps that behaviour — the parts it already holds are recorded with the block — and after a compaction the full block is injected again.
+- Boot injection is delivered as a plugin message at the start of a step (a full block is a *snapshot* that supersedes the previous one; a partial update is a *notice* that supersedes nothing), replacing the system-prompt runtime-context contribution. Deployments that disable runtime context are therefore no longer silencing memory injection.
+- `auto-commit` now reports what it did (`clean` / `waiting` / `committed` / `failed`), and `memory_write` passes that through instead of assuming success.
+
+## [0.6.0] - 2026-09-09
+
+### Added
+
+- **`deferUntilUserSpeaks`** (default on): nothing (boot block, recall, digest reminder) is injected before the session's first real user message.
+- **`activeSessionOnly`** (default on): only the live root agent that most recently received a user message is injected — background sessions are left alone.
+
+### Fixed
+
+- The first recall fired immediately: the next-recall timestamp started at 0, so the first idle check triggered. It now arms a random interval first.
+
+## [0.5.2] - 2026-08-31
+
+### Changed
+
+- **DSH 0.1.2-alpha.1 support**: peer ranges for `@deepseek-ai/dsh-skill` / `@deepseek-ai/dsh-system-prompt` widened to `^0.1.2-alpha.1`.
+- Dropped the obsolete `@deepseek-ai/dsh-client-runtime` entry from `dsh.client.inject`.
+
+## [0.5.1] - 2026-08-24
+
+### Changed
+
+- `CHANGELOG.md` is shipped inside the npm package.
+
+## [0.5.0] - 2026-08-23
+
+### Added (recall nudge)
+
+- **Recall nudge**: when the conversation goes quiet, the agent surfaces — in its own voice — something it genuinely remembers about you or about the two of you (preferences, past events, open decisions, recent progress). Conversational only: it never writes the store and never invents a memory, drawing only on recent `log.md` entries.
+- **Two triggers**: `turn-stopping` plus a 30-second poll, so a fully idle agent still speaks up.
+- **Random interval** inside `[recallIntervalMinMinutes, recallIntervalMaxMinutes]`, so the cadence never feels metronomic.
+- New settings, all hot-editable in the Settings panel: `recallEnabled` (default `true`), `recallIntervalMinMinutes` (30), `recallIntervalMaxMinutes` (240), `recallMaxPerSession` (3).
+
+## [0.4.0] - 2026-08-19
+
+### Added
+
+- **Soul-bootstrap guidance**: while the store has no soul yet (`SOUL.md` missing or still a template, or `BOOTSTRAP.md` not complete), the boot block opens with a first-person directive that makes the agent start the soul-definition conversation on its own; the directive disappears at zero cost once the soul is complete. Legacy stores without `BOOTSTRAP.md` are judged by whether `SOUL.md` is filled.
+
+## [0.3.0] - 2026-08-19
+
+### Added (digest guard + auto-commit)
+
+- **Digest guard**: per root agent, watches for the agent going idle while the store has not been written for a while (with cooldown and a per-session cap) and injects a synthetic reminder; writing the store clears it.
+- **Auto-commit**: polls `git status` and commits after the store has been quiet for the configured period, flushing pre-existing dirty state at startup; a store without `.git` is skipped.
+
+### Changed
+
+- CLI `status` reports the last log write (digest freshness).
+
+### Fixed
+
+- Auto-commit never started on the first rebuild (wiring bug in the create condition), caught by a new regression test.
+
+## [0.2.1] - 2026-08-18
+
+### Changed
+
+- **Settings panel no longer uses a settings namespace**: the web settings wire serves a hard-coded allowlist, so a plugin namespace is rejected. The plugin now keeps its own JSON config file plus a `GET/POST /api/memory/config` route, applied hot on write.
+- **Installable from the market**: ships a `dsh.bundle` manifest plus a root `cordis.patch.yml`, so `dsh plugin add` / dsh-market can mount it.
+
+## [0.2.0] - 2026-08-18
+
+### Added
+
+- **Settings-panel section** for `enabled` / `memoryDir` / `autoInject` / `registerSkill`, hot-applied.
+
+## [0.1.1] - 2026-08-18
+
+### Fixed
+
+- Cordis metadata (name / inject / Config) is attached to the default export so the loader cannot lose it.
+
+## [0.1.0] - 2026-08-18
+
+### Added
+
+- Karpathy *LLM Wiki*-style long-term memory: mandatory boot injection, an embedded `memory` skill, a portable CLI (`init` / `search` / `lint` / `status` / `pack` / `unpack`) and scaffolding templates.
+- The store itself: `SOUL.md` / `MEMORY.md` / `BOOTSTRAP.md`, category pages (`identity/ user/ skills/ decisions/ projects/ concepts/`), `index.md` and `log.md` — plain markdown + git, migratable.
+
+---
+
+# 更新日志（Changelog）
+
 所有记录跟随 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/) 风格；版本号与 `package.json` 保持一致。
+
+## [0.7.0] - 2026-09-23
+
+### Added（注入与检索层改造）
+
+- **新增 `memory_search` / `memory_read` / `memory_write` 三个模型可见工具**：关键词检索记忆页 → 读一页正文（返回写回用的 `version` 令牌）→ 两步写回。`memory_write` 机器强制查重与版本校验，并自动更新 `index.md` 那一行、重生成派生热页子集、触发 git 提交；`registerTools` 可整体关闭。
+- **新增 `indexBootMode`（默认 `derive`）**：常驻索引改为从 `index.md` 现算的 `salience: 1` 热页子集（一行一条、摘要按预算压缩），**永不被截断**，也不再需要外置派生文件 `index.boot.md`；设为 `off` 则按原文注入整份索引。
+
+### Changed
+
+- **boot 注入改为条目级增量**：注入块由命名段落组成，插件按段落记账——记忆没变时**什么都不注入**，变了一段就**只重发那一段**（并声明「未列出的段落仍然有效」），不再整块重发。会话在新进程里恢复时同样只补变化段（注入消息记录了段落清单）；压缩导致基线消失时才重发整块。
+- 注入形态改为**步骤开始时的 plugin 消息**（整块是取代前一份的 *snapshot*，增量是不取代任何东西的 *notice*），不再走系统提示词的运行时上下文；因此关掉运行时上下文的部署不再连记忆注入一起静默关掉。
+- `auto-commit` 如实回报结果（`clean` / `waiting` / `committed` / `failed`），`memory_write` 把它原样告知模型，不再假定提交成功。
 
 ## [0.6.0] - 2026-09-09
 
@@ -13,10 +125,6 @@
 ### Fixed
 
 - 主动追忆首拍立即开火：`nextRecallAt` 初始值为 0 → 第一次 idle 检查就触发。改为「首个满足条件的空闲时刻先 arm 间隔，再等一个随机间隔后才开口」。
-
-### Tests
-
-- 54/54 全过（新增 activity-tracker 套件：hasUserSpoken / isActive / shouldInject / 去重 / 注册表跳过死亡 agent；recall / digest 各补 defer + active 两个闸门用例，并更新首拍 arm 语义用例）。
 
 ## [0.5.2] - 2026-08-31
 
@@ -50,10 +158,6 @@
 ### Fixed
 
 - 首版主动追忆只挂 `turn-stopping`，agent 纯空闲（用户静默等待）时永远不触发 → 补 **30s 轮询定时器**解决。
-
-### Tests
-
-- 44/44 全过（新增 recall-nudge 套件：触发/节律/上限/禁用/空素材/纯空闲轮询/随机间隔范围）。
 
 ## [0.4.0] - 2026-08-19
 

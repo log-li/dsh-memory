@@ -19,35 +19,69 @@ import { MemoryConfigStore } from '../lib/config-store.js'
 
 /** Build a fake Cordis ctx; `ctx.inject` records dependency requests. */
 function makeFakeCtx() {
-  const calls = [] // every systemPrompt.context / skills.register call
+  const calls = [] // every skills.register / tools.register call
   const disposed = []
   const injects = []
+  const handlers = [] // every ctx.on(name, listener) registration
+  const effects = [] // Cordis disposes these with the plugin fiber; the fake runs them on demand
   const ctx = {
-    systemPrompt: {
-      context(value) {
-        calls.push(['systemPrompt', value])
-        return () => disposed.push('systemPrompt')
-      },
-    },
     skills: {
       register(value) {
         calls.push(['skills', value])
         return () => disposed.push('skills')
       },
     },
+    tools: {
+      register(value) {
+        calls.push(['tools', value])
+        return () => disposed.push('tools')
+      },
+    },
+    agents: {
+      roots: () => [],
+      get: () => undefined,
+    },
     logger: { info() {}, warn() {} },
-    on() {
-      return () => {}
+    on(name, listener) {
+      const entry = { name, listener }
+      handlers.push(entry)
+      return () => {
+        const index = handlers.indexOf(entry)
+        if (index >= 0) handlers.splice(index, 1)
+      }
     },
     inject(deps, callback) {
       injects.push({ deps, callback })
     },
     effect(fn) {
       const cleanup = fn()
+      if (typeof cleanup === 'function') effects.push(cleanup)
       return () => cleanup?.()
     },
   }
-  return { ctx, calls, disposed, injects }
+  const runEffects = () => {
+    for (const cleanup of effects.splice(0)) cleanup()
+  }
+  return { ctx, calls, disposed, injects, handlers, runEffects }
+}
+
+/** Invoke an injected dependency callback by its first dep name. */
+function injectCallback(injects, name) {
+  const entry = injects.find((candidate) => candidate.deps[0] === name)
+  assert.ok(entry !== undefined, `no ctx.inject([${name}]) registration`)
+  return entry.callback
+}
+
+/** The registered pre-step listener that carries the boot injection. */
+function preStepHandler(handlers) {
+  const entry = handlers.find((candidate) => candidate.name === 'agent/pre-step')
+  assert.ok(entry !== undefined, 'boot injection must register an agent/pre-step listener')
+  return entry.listener
+}
+
+/** Run one pre-step step and return the decision. */
+async function runPreStep(handlers, agent) {
+  return preStepHandler(handlers)({ agent }, () => Promise.resolve({ kind: 'enter', messages: [] }))
 }
 
 function makeFakeRes() {
@@ -90,14 +124,21 @@ test('default export retains Cordis metadata after DSH unwraps it', () => {
   assert.equal(CONFIG_ROUTE_PATH, '/api/memory/config')
 })
 
-test('works without a webServer (headless): config-only, boot + skill registered', () => {
-  const { ctx, calls, disposed, injects } = makeFakeCtx()
+test('works without a webServer (headless): config-only, skill registered, boot listener armed', () => {
+  const { ctx, calls, disposed, injects, handlers, runEffects } = makeFakeCtx()
   const dispose = plugin(ctx, CFG)
-  assert.deepEqual(calls.map(([service]) => service), ['systemPrompt', 'skills'])
+  assert.deepEqual(calls.map(([service]) => service), ['skills'])
   assert.deepEqual(disposed, [])
-  assert.deepEqual(injects.map((entry) => entry.deps), [['webServer']])
+  assert.deepEqual(injects.map((entry) => entry.deps), [['tools'], ['webServer']])
+  preStepHandler(handlers) // boot injection is armed even without webServer/tools
   dispose()
-  assert.deepEqual(disposed, ['systemPrompt', 'skills'])
+  runEffects() // Cordis unloads the fiber's effects with it
+  assert.deepEqual(disposed, ['skills'])
+  assert.equal(
+    handlers.some((entry) => entry.name === 'agent/pre-step'),
+    false,
+    'the pre-step listener is disposed with the plugin',
+  )
 })
 
 test('registers the config route and GET serves the resolved config', async () => {
@@ -129,6 +170,8 @@ test('registers the config route and GET serves the resolved config', async () =
     memoryDir: CFG.memoryDir,
     autoInject: true,
     registerSkill: true,
+    registerTools: true,
+    indexBootMode: 'derive',
     deferUntilUserSpeaks: true,
     activeSessionOnly: true,
     recallEnabled: true,
@@ -139,12 +182,13 @@ test('registers the config route and GET serves the resolved config', async () =
   dispose()
 })
 
-test('POST hot-edits: enabled=false tears both registrations down; restore re-registers', async () => {
+test('POST hot-edits: enabled=false tears skill + tools down; restore re-registers', async () => {
   const { ctx, calls, disposed, injects } = makeFakeCtx()
   const dispose = plugin(ctx, CFG)
+  injectCallback(injects, 'tools')(ctx)
 
   const routes = new Map()
-  injects.find((entry) => entry.deps[0] === 'webServer').callback({
+  injectCallback(injects, 'webServer')({
     webServer: {
       register(route) {
         routes.set(route.path, route)
@@ -154,22 +198,26 @@ test('POST hot-edits: enabled=false tears both registrations down; restore re-re
     effect: () => () => {},
   })
   const route = routes.get(CONFIG_ROUTE_PATH)
-  assert.deepEqual(calls.map(([service]) => service), ['systemPrompt', 'skills'])
+  assert.deepEqual(calls.map(([service]) => service), [
+    'skills', 'tools', 'tools', 'tools',
+  ])
 
   let result = await routeCall(route, 'POST', JSON.stringify({ enabled: false }))
   assert.equal(result.status, 200)
   assert.equal(JSON.parse(result.body).enabled, false)
-  assert.deepEqual(disposed, ['systemPrompt', 'skills'])
-  assert.equal(calls.length, 2) // nothing re-registered
+  assert.equal(calls.length, 4, 'nothing re-registered while disabled')
+  assert.equal(disposed.filter((entry) => entry === 'tools').length, 3)
+  assert.equal(disposed.filter((entry) => entry === 'skills').length, 1)
 
   result = await routeCall(route, 'POST', JSON.stringify({ enabled: true }))
   assert.equal(result.status, 200)
   assert.deepEqual(calls.map(([service]) => service), [
-    'systemPrompt', 'skills', 'systemPrompt', 'skills',
+    'skills', 'tools', 'tools', 'tools', 'skills', 'tools', 'tools', 'tools',
   ])
 
   dispose()
-  assert.deepEqual(disposed, ['systemPrompt', 'skills', 'systemPrompt', 'skills'])
+  assert.equal(disposed.filter((entry) => entry === 'tools').length, 6)
+  assert.equal(disposed.filter((entry) => entry === 'skills').length, 2)
 })
 
 test('POST rejects a bad patch and an empty memoryDir', async () => {
@@ -278,11 +326,11 @@ test('ships a dsh.bundle manifest so `dsh plugin add` can mount it', () => {
   assert.equal(insertName, pkg.name, 'insert.name must equal package.json name')
 })
 
-test('hot edit: memoryDir re-registers boot + skill against the new directory', async () => {
-  const { ctx, calls, injects } = makeFakeCtx()
+test('hot edit: memoryDir re-points the boot injection and the skill', async () => {
+  const { ctx, calls, injects, handlers } = makeFakeCtx()
   const dispose = plugin(ctx, CFG)
   const routes = new Map()
-  injects.find((entry) => entry.deps[0] === 'webServer').callback({
+  injectCallback(injects, 'webServer')({
     webServer: {
       register(route) {
         routes.set(route.path, route)
@@ -295,12 +343,18 @@ test('hot edit: memoryDir re-registers boot + skill against the new directory', 
 
   const otherDir = mkdtempSync(join(tmpdir(), 'dsh-memory-other-'))
   writeFileSync(join(otherDir, 'SOUL.md'), '# soul\n')
+  const before = await runPreStep(handlers, undefined)
+  // `otherDir` is not configured yet, but the first store (CFG.memoryDir) only
+  // has a placeholder SOUL.md written by an earlier test run: the injection
+  // either talks about the old dir or about nothing at all.
+  if (before.messages.length > 0) assert.ok(before.messages.at(-1).content[0].text.includes(CFG.memoryDir))
+
   const result = await routeCall(route, 'POST', JSON.stringify({ memoryDir: otherDir }))
   assert.equal(result.status, 200)
 
-  const bootCall = calls.filter(([service]) => service === 'systemPrompt').at(-1)[1]
+  const after = await runPreStep(handlers, undefined)
+  assert.ok(after.messages.at(-1).content[0].text.includes(otherDir))
   const skillCall = calls.filter(([service]) => service === 'skills').at(-1)[1]
-  assert.ok(bootCall.text().includes(otherDir))
   assert.deepEqual(skillCall.resourceBase, { kind: 'directory', path: otherDir })
   dispose()
 })

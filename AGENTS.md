@@ -24,7 +24,7 @@ DSH 的长期记忆插件（**fork**）：markdown + git 记忆库 + 开机注�
 
 ```bash
 npm test              # memory.mjs --self-test
-npm run test:plugin   # node --test（7 个测试文件）
+npm run test:plugin   # node --test（10 个测试文件，100 条）
 npm run lint:memory   # dsh-memory lint：查重复/孤儿/该归档
 ```
 

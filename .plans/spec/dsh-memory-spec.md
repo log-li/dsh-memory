@@ -2,7 +2,7 @@ Status: active
 
 # dsh-memory（fork）：把记忆注入层改成 CC 式
 
-- **创建于**: 2026-09-23 · **最近更新**: 2026-09-23
+- **创建于**: 2026-09-23 · **最近更新**: 2026-09-23（§5 改造点 (a)(b)(c) 已实现并落测试；§10 覆盖清单同步）
 - **上游**: [`LittleBlackTong/dsh-plugin-memory`](https://github.com/LittleBlackTong/dsh-plugin-memory) v0.6.0（MIT）
 - **本仓库**: `log-li/dsh-memory`（`origin` = 本 fork，`upstream` = 上游）
 - **本机宿主**: `@deepseek-ai/dsh 0.1.5-rc.1`（peer 范围见 §6）
@@ -38,13 +38,15 @@ Status: active
 | 机制 | 实现 | 证据 |
 |---|---|---|
 | 记忆库 | `<memoryDir>`（默认 `~/.dsh/memory`）：`SOUL.md` 人格 / `MEMORY.md` 协议 / `index.md` 目录 / `log.md` 时间线 / `bootstrap` / 分类页 | `lib/scaffold.js` |
-| **boot 注入** | `ctx.systemPrompt.context()` 注入 boot 块；`perFile = floor(bootMaxChars / bootFiles.length)`，逐文件截断 | `lib/boot.js`（`renderBootBlock`）、`lib/index.js` |
+| **boot 注入** | 本 fork：`agent/pre-step` 贡献一条 plugin 消息，块渲染成命名段落、按段落增量重发（`lib/injector.js`）；`perFile = floor(bootMaxChars / bootFiles.length)` 逐段落截断 | `lib/boot.js`（`renderBootParts`/`renderBootBlock`）、`lib/injector.js`、`lib/index.js` |
+| **检索工具** | 本 fork：`memory_search` / `memory_read` / `memory_write`（宿主 registry 手写定义 + 包内参数校验） | `lib/tools.js`、`lib/pages.js`、`lib/tool-schema.js` |
 | 注入闸门 | `deferUntilUserSpeaks`（用户开口才注入）、`activeSessionOnly`（只注入当前激活会话） | `lib/activity-tracker.js` |
-| 写入 | **无专用工具**：模型按内嵌技能约定写文件 + 手工同步 `index.md`；`autocommit` 做 git 提交 | `skills/memory.md`、`lib/autocommit.js` |
+| 写入（上游） | **无专用工具**：模型按内嵌技能约定写文件 + 手工同步 `index.md`；`autocommit` 做 git 提交 | `skills/memory.md`、`lib/autocommit.js` |
+| 写入（本 fork） | `memory_write` 两步写入：查重 + `ifVersion` + 自动 `index.md` 一行 + 派生重生成 + 触发提交 | `lib/tools.js`、`lib/pages.js` |
 | 催记 / 追忆 | `digest-guard`（久未写→nudge）、`recall-nudge`（空闲→主动提往事） | `lib/digest-guard.js`、`lib/recall-nudge.js` |
 | 检索 | CLI `dsh-memory search/lint/status/pack/unpack`（需 bash）+ 模型直接 `read` | `scripts/memory.mjs` |
 | 设置 | 10 项热改（`enabled`/`memoryDir`/`autoInject`/两道闸门/`registerSkill`/`recall*`），存 `<dshHome>/memory.json` | `lib/config-store.js`、`lib/client.js` |
-| 测试 | 7 个 `node --test` 文件 + `memory.mjs --self-test` | `test/`、`package.json` scripts |
+| 测试 | 10 个 `node --test` 文件（100 条）+ `memory.mjs --self-test` | `test/`、`package.json` scripts |
 
 ## 4. 与 Claude Code 的差距（实测，作为改造依据）
 
@@ -63,36 +65,50 @@ Status: active
 
 ## 5. 设计（改造点）
 
-### 5.1 (a) 索引分层：常驻 boot 子集，全量按需
+### 5.1 (a) 索引分层：常驻 boot 子集，全量按需 —— **已实现**
 
-**已被本机验证的过渡做法**（外置，不改插件即可用）：
-- 生成 `<memoryDir>/index.boot.md`：**只含 `salience = 1` 的页面**，一行一条、行宽截断（实测 17 条 / 2,575 字符）；
-- `bootFiles: [MEMORY.md, index.boot.md]`、`bootMaxChars: 5600`（`5600/2 = 2800` ≥ 2575 ⇒ **零截断**）；
-- 全量 `index.md` 仍按需 `read`；生成器脚本在 digest 时重跑（防漂移）。
+**过渡做法（外置，2026-09-23 已验证）**：`<memoryDir>/index.boot.md` 只含 `salience = 1` 的页面，一行一条、行宽截断（实测 17 条 / 2,575 字符）；`bootFiles: [MEMORY.md, index.boot.md]`、`bootMaxChars: 5600`（`5600/2 = 2800` ≥ 2575 ⇒ 零截断）；生成器脚本在 digest 时重跑。
 
-**内置化（本 fork 目标）**：把该派生逻辑移进插件（配置项 `indexBootMode: off | derive`，默认 `derive`），在 `renderBootBlock` 里从 `index.md` 现算，避免"多一份需要同步的派生文件"。
+**内置化（本次实现，取代外置脚本）**：`indexBootMode: off | derive`（默认 `derive`）。
+- `renderBootParts()` 从 `index.md` **现算**热页子集（`lib/index-format.js#deriveIndexSubset`），不再需要一份要同步的派生文件：行解析 → 只留 `salience: 1` → 摘要按 `maxLineChars`（默认 110）压缩 → 超预算的行降级为「标题 + 路径」→ 仍超预算才丢弃（并如实计数，不静默）。
+- 段落标题写明它是子集（`### index.md（boot 子集：salience=1 热页）` + 「完整目录见 index.md，需要冷页时按需 read」），模型因此知道全量表在哪。
+- **回退规则**：目录里若一条 salience 标记都没有、且原文仍塞得进该段落预算 → 按原文注入（小库/老库不会被"暂无热页"蒙住）；`index.md` 缺失时回退到外置 `index.boot.md`（若存在）。
+- 兼容：`bootFiles` 里写 `index.md` 或 `index.boot.md` 都走同一套现算逻辑；`indexBootMode: 'off'` 恢复逐字注入。
 
-### 5.2 (b) 条目级 digest 去重
+### 5.2 (b) 条目级 digest 去重 —— **已实现（机制与本文档初稿不同，见下）**
 
-- boot 块渲染后取 **SHA-1**，与「本插件在会话可见表面上最后一条注入」比对：**不变则不重发**（宿主已有投影级去重，这一层解决"部分变化"）。
-- 变化时**只重发变化段**（按文件分段 diff：`MEMORY.md` / `index.boot.md` / log 尾部各自独立）。
-- 需处理 **compaction 后补注入**（压缩会抹掉历史里的注入）。
-- 参考实现：`justhalfbit/dsh-plugin-memory` README:95-98（与可见表面末条比对 + compaction 后补注）。
+boot 块渲染为**命名段落**（`header` / `soul-directive` / 每个 boot 文件 / `log.md` 尾部），注入层按段落记账（`lib/injector.js`）：
 
-### 5.3 (c) 检索与写入工具（收益最大）
+| 情形 | 注入什么 |
+|---|---|
+| 某会话首次注入 | 整块，`form: 'snapshot'`（契约：同一 producer 的后续快照取代它） |
+| 有段落变化 | **只发变化段落**，`form: 'notice'`（"刚发生的事"，不取代任何东西）+ 一行账目（summary） |
+| 无变化 | **什么都不发**（连消息都不产生） |
+| 基线已不在模型可见面上（压缩）／上次注入未落地（步骤被拒） | 重发整块 |
 
-新增 3 个模型可见工具：
+- **判定"模型手上有什么"**：读会话 **surface**（`session.surface.nodes` + `eventAt()`）里本插件自己的消息（`source.plugin === 'memory'`），与其文本逐字比对。基线 = 最近一条 `snapshot`；若最近一条注入的文本 ≠ 本插件上次发出的文本，说明那次没落地或已被压缩带走 → 重发整块（宁可多花一次，也不让模型拿着过期记忆）。
+- **压缩后补注入**：`snapshot` 基线不在 surface 上即触发重发；冷页/非热页变化**完全不触发**注入（常驻块里根本没有它）。
+- **进程重启（会话恢复）**：内存态为空时优先**从可见快照的消息段落重建**"模型手上有哪些段落"（整块注入的 `sections` 逐段落命名，`memory:<partId>`）——重建成功就直接算增量，连"store 变过"也只需重发变化段；快照没有段落名时退化为「整块文本逐字相同 → 采纳，否则重发整块」；只在可见链尾是增量通知时用源文件 mtime（容差 2ms）兜底。
+- **机制偏离说明（为什么不再用 `ctx.systemPrompt.context()`）**：宿主把 runtime-context 快照按**整块**渲染，且拼接时直接声明 "This snapshot supersedes earlier runtime-context snapshots"——只发增量会与这句「取代此前全部」的框架冲突（模型可能认为未重发的人设/协议失效）。因此注入改走 `agent/pre-step` 贡献（`prepend` 不设，消息按 plugin 源追加）：全量用 `snapshot`（取代语义正确）、增量用 `notice`（追加语义正确），并且**只有自己发的消息**参与记账。附带好处：段落文本不再经过 `{{var}}` 严格插值，记忆正文里出现 `{{...}}` 也不会再把 assembly 打崩。
+- 门控与原来一致：`enabled` / `autoInject` / `deferUntilUserSpeaks` / `activeSessionOnly` 每步实时读取（设置面板热改即时生效）。
 
-| 工具 | 作用 | 要点 |
+### 5.3 (c) 检索与写入工具（收益最大）—— **已实现**
+
+三个模型可见工具（`lib/tools.js`，可被 `registerTools: false` 整体关闭）：
+
+| 工具 | 作用 | 要点（已实现） |
 |---|---|---|
-| `memory_search` | 关键词/短语检索记忆页（标题 + 摘要 + 命中上下文） | 有界返回；无命中要说"无命中"而不是空 |
-| `memory_read` | 按路径读整页正文 | 路径必须在 `<memoryDir>` 内（防越界读） |
-| `memory_write` | **两步写入的机器强制**：写页面 + 自动在 `index.md` 追加/更新一行 + 重生成 boot 子集 | 先查重（同主题提示"改旧页"）；`if_version` 式乐观并发；写后跑 `autocommit` |
+| `memory_search` | 关键词检索记忆页（标题 + 摘要 + 命中行上下文） | 有界返回（默认 8、上限 25）；**无命中明确回「无命中（已扫描 N 页）」**；全词命中优先，只有部分命中时标 `partial` 提示换词；默认不检索 `log.md`（`includeLog: true` 才纳入）、`raw/` 需 `includeRaw` |
+| `memory_read` | 按路径读整页正文 | 路径规范化后必须落在 `<memoryDir>` 内（越界即拒）；返回 `version`（写回令牌）+ 标题/salience/字节数 |
+| `memory_write` | **两步写入的机器强制** | 新建省略 `ifVersion`；改旧页必须带 `memory_read` 返回的 `ifVersion`，不匹配即拒（乐观并发）；同 slug/同 title 的页已存在 → 拒绝并提示「改旧页」（`allowDuplicate: true` 才另建）；写后**自动更新 `index.md` 一行**（原位替换则保持行位与分区）+ 重生成存在的派生 `index.boot.md` + 触发 auto-commit（`committer.check(true)`，状态如实回给模型）；可选 `logEntry` 追加 `log.md` 时间线；`raw/` 只读、非 `.md` 拒绝 |
 
-### 5.4 (d) 可选 automemory（默认关）
+工具定义以**普通对象**注册（`ctx.tools.register`），参数校验在包内完成（`lib/tool-schema.js`，与宿主支持的 JSON Schema 子集一致）——**刻意不 import `@deepseek-ai/dsh-tools`**：link 安装时包解析按 realpath 走本仓库 `node_modules`，引入宿主 tools 包会连带引入 `dsh-scope`/`dsh-llm` 等**第二份宿主实例**（scope 身份、工具装配都可能错乱），违反「插件不得声明共享宿主包」。宿主仍会校验 `output.schema`，因此三个工具的输出 schema 与实际返回值都由测试逐字段断言。
 
-- `turn/end` 或空闲时用 `ctx.llm.stream()` 做两阶段抽取（先判断"有没有值得记的"，再写）。
-- **默认关闭**；开启后在设置页显示"本次会话暂停自动记忆"。
+### 5.4 (d) 可选 automemory（默认关）—— **未实现（本轮不做，见下）**
+
+设计仍然有效：`turn/end` 或空闲时用 `ctx.llm.stream()` 两阶段抽取（先判断"有没有值得记的"，再写），默认关闭；开启后设置页提供"本次会话暂停自动记忆"。
+
+本轮**未实现**的理由（如实记录）：它需要 LLM 路由（provider/model 解析与降级）、会话转录裁剪、结构化输出解析、设置面板的会话级暂停控件，**并且是唯一会自动改写记忆库的路径**——风险面最大、收益最低（默认关）。因此按「先落 (a)(b)(c) 并端到端验证，再单独一轮做 (d)」推进；在 (d) 落地前，spec 不把默认关的能力描述成可用功能。
 
 ## 6. 约束（硬）
 
@@ -118,11 +134,11 @@ Status: active
 
 ## 8. 验收标准
 
-**自动化**：`npm test` + `npm run test:plugin` 全绿；新增测试覆盖：boot 子集派生、digest 去重（含 compaction 后补注）、`memory_search/read/write` 的查重与越界拒绝。
+**自动化**：`npm test` + `npm run test:plugin` 全绿（103 条）；新增测试覆盖：boot 子集派生与预算、段落级增量去重（含压缩后补注入、重启采纳、未落地重发）、`memory_search/read/write` 的查重/越界/乐观并发/索引与派生同步。
 
 **实测（本机 0.1.5-rc.1）**：
 1. boot 块**无任何截断提示**；`salience=1` 页面 100% 出现在常驻块里。
-2. 记忆不变时**不重发**；改一页后**只重发变化段**（对比 `decisions.jsonl` 式日志或会话消息增量）。
+2. 记忆不变时**不重发**；改一页后**只重发变化段**（读回会话日志里的注入消息文本对照）。
 3. `memory_search` 命中 → `memory_read` 取正文 → `memory_write` 改页并**自动更新 `index.md` 一行**，`git log` 有对应提交。
 4. 换装前后 `~/.dsh/memory/` **内容零变化**（`git -C ~/.dsh/memory status` 干净），设置面板 10 项照旧可改。
 
@@ -141,12 +157,14 @@ Status: active
 | # | 链 | 判据 |
 |---|---|---|
 | L1 | 隔离实例装载：`link:` 安装 + bundles 解析 + 服务器启动 | HTTP 401（非 000）；日志无 `plugin tree failed`、无 `client-modules ... failed to compose` |
-| L2 | **真实会话内的注入**：新会话 system prompt 出现 boot 块 | 从会话日志读回**注入文本全文并逐字通读**（含 `salience=1` 页正文、无截断提示），不只 grep 关键词 |
+| L2 | **真实会话内的注入**：新会话出现本插件的 boot 注入消息 | 从会话日志读回**注入文本全文并逐字通读**（含 `salience=1` 热页行、无截断提示），不只 grep 关键词。⚠️ 注入形态 2026-09-23 起由「systemPrompt 运行时上下文」改为「plugin `snapshot` 用户消息」，判据随之改为「会话日志里 `source.plugin === 'memory'` 的首条注入」 |
 | L3 | `memory` 技能注册：技能目录可见、按需加载正文 | 会话内调用一次能取到 `skills/memory.md` 正文 |
 | L4 | 设置面板：10 项可读、可写、热生效 | 面板读写各一次 + 观察注入/技能/脚手架随之变化（**本 fork 的 devDependencies 遮蔽宿主 `schemastery`，此处是唯一新增风险面**） |
 | L5 | CLI：`status` / `lint` / `search` / `pack` / `unpack` | 在真实记忆库上各跑一次，pack 产物能 unpack 回来 |
 | L6 | digest 提醒：收尾注入提醒 → 写回 → 提醒解除 | 一次真实会话内观察注入与解除 |
 | L7 | 数据面不变：换装前后记忆库零变化 | 换装前后 `git -C <memoryDir> status` 均干净、页面内容逐字节一致 |
+| L8 | **工具闭环**：`memory_search` → `memory_read` → `memory_write` | 真实会话内三连调用全部成功；写回后读回 `index.md` 那一行、`git log` 有对应提交、`memory_write` 报告 `action/indexRow/autocommit` 与实际一致 |
+| L9 | **增量注入**：改一页后只重发变化段 | 同一会话内写回一页后，会话日志新增一条 `form: 'notice'` 注入，其文本只含该段落、并带「未列出的段落仍然有效」声明；未改动时无新增注入消息 |
 
 ### ② 可用结构断言替代的项（须写明理由；改动触及其逻辑时升格为必跑）
 
@@ -160,8 +178,18 @@ Status: active
 ### 当前状态（必须与事实一致）
 
 - **已跑**：L1（隔离实例装载 + 启动）、boot 文本按**真实代码路径 + 真实脚手架**读回并逐字通读（3,838 字符、无截断）、隔离记忆库 scaffold 完整、③ 改名项全部。
-- **未跑（切换前必须补跑）**：**L2**（上面那次是探针读回，**不是**真实会话 system prompt）、**L3**、**L4**、**L5**、**L6**、**L7**。
-- 因此：**切换动作是 L2–L7 的门口**——不得先切换再补验证。
+- **2026-09-23 注入层改造的验证结果**（隔离实例 `DSH_HOME=/tmp/dsh-e2e-memory`，两个 profile：web + headless；模型侧接一个**自建 stub 端点**（OpenAI-completions，按脚本产出工具调用），因此**模型不是真实 LLM**）：
+  - ✅ **L1**：`link:` 安装 + bundles 解析 + 服务器启动（HTTP 401、日志无 `plugin tree failed`）；**红绿对照**：故意把 bundle 名写错 → `cannot resolve profile bundle "@log.li/dsh-memory-typo"`（红），改回即通过（绿）。
+  - ✅ **L2**：真实会话的**模型可见请求**与**持久会话日志**（解压 `session.v3.jsonl.zstd`）都读到注入全文并逐字通读：`source.plugin='memory'`、`form='snapshot'`、670 字符、含 `### index.md（boot 子集：salience=1 热页）` 且**只有热页行**（冷页 `cold-archive.md` 不在常驻块里）、无任何截断/超预算提示。
+  - ✅ **L3**：会话技能目录里出现插件注册的 `memory` 技能（隔离实例无同名文件技能）。
+  - ⚠️ **L4（半边）**：`GET /api/memory/config` 返回含新键（`registerTools`/`indexBootMode`）的配置；POST 改 `indexBootMode`/`registerTools` 热生效并落盘，非法值 400 拒绝。**设置面板的浏览器渲染未验证**（无浏览器）——client bundle 是否 compose 只能靠「日志无 `client-modules … failed to compose`」间接判断。
+  - ✅ **L5**：CLI `status` / `search` / `lint` / `pack` / `unpack` 在真实记忆库上各跑一次；`pack` → `unpack` 8 文件完整还原。
+  - ❌ **L6**：未跑（digest 提醒需要 120 分钟空闲窗口，本轮未构造）。
+  - ✅ **L7（格式侧）**：**上游插件自己的渲染器**能读本 fork 写出的库（index 行/log/页面），渲染 815 字节、含新增热页行 → 数据面仍是上游格式。
+  - ✅ **L8**：真实宿主会话里 `memory_search` → `memory_read`（拿到 `version`）→ `memory_write` 全链路成功；写回报告与实际一致（`index.md：inserted`、`log.md：已追加`、`git：committed`），磁盘上索引行插进正确分区、log 追加、`git log` 出现 auto-commit 提交；另一轮里**故意带错 `ifVersion` 新建页 → CONFLICT 拒绝**（负路径也验了）。
+  - ✅ **L9**：写回后**模型可见请求**里出现且只出现一条 `form='notice'` 增量（473 字符，含 index/log 两段、「未列出的段落仍然有效」），此后无变化的那一步**没有任何新增注入**；持久日志 `seq=32` 记录了同一增量。
+  - ⚠️ **未覆盖**：会话在新进程里**恢复**（headless app 无 `--resume`）→ 仅由单测覆盖；真实 LLM 行为（stub 不是真模型）。
+- 因此：**切换动作是 L4（浏览器侧）/L6 的门口**——不得先切换再补验证。
 
 ## 11. 变更历史
 
@@ -172,3 +200,29 @@ Status: active
 - 独立模型家族 review（外部审查，改代码后、验证前）：0【严重】/ 3【中等】已修——spec 内本机绝对路径、并存窗口纪律、包名与 `insert.name` 一致性断言；结论确认 `lib/client.js` 的 `id` 必须等于包名（宿主按包 specifier 组装 boot 图、浏览器按 id 找 factory，不一致即硬错、设置分区静默消失）。
 - `Status` 由 `proposed` 改 `active`：spec 是活文档，状态写在文件内，不随目录搬迁。
 - 新增 §10 **E2E 覆盖清单**（7 条活体链 + 可结构断言替代项 + 每次改动追加项），并如实记录未跑项——**切换 profile 前必须补跑 L2–L7**。
+
+### review 处置记录（2026-09-23，独立模型家族审查 (a)(b)(c) 变更集）
+
+逐条核验后的处置（采纳 / 调整 / 拒绝 + 理由）：
+
+| # | review 说法 | 我的核验 | 处置 |
+|---|---|---|---|
+| 1 | 【严重】`readOwnInjections` 靠「文案巧合」区分自家注入与 digest/recall nudge（同 plugin 名 `memory`） | 识别判据本已是 `source.form === 'snapshot' + 段落名` / `form === 'notice' + summary 前缀`；nudge 消息**无 `form`**，从不进账本（review 终稿也改口为"契约脆弱性"）。但 notice 一路确实只靠 summary 前缀这一个文本信号 | **采纳（硬化）**：notice 再加一道独立信号——消息正文以 `DELTA_MARKER`（`【记忆增量更新`）开头；快照段落用 `memory:<partId>` 前缀且要求**段落文本拼接 === 消息正文**。补负向测试：同 plugin 名但无 `form` 的 nudge、复用同前缀的别的 notice、段名不是我们的 snapshot，一律不入账本。因此**不改** nudge 的 plugin 名（避免动上游模块与其测试） |
+| 2 | 【中等】冷启动 reconcile 用 `maxSourceMtime` 判基线，log.md 一 append（digest 必然）就让重启后的会话重发整块 | 逻辑无误（保守、安全），但确实把「重启不重发」白白浪费 | **采纳（改判据）**：整块注入的 `sections` 改为**逐段落命名**（`memory:<partId>`），持久日志里因此保留了"模型手上有哪些段落"；重启后直接**从可见快照重建 part map** → 算增量（而非重发整块）。仅当可见快照没有段落名（旧版/别的 producer 写的）才回退到 mtime 判据或整块重发。补两条测试（有 part 名→增量；无 part 名→整块） |
+| 3 | 【中等】`bootFiles` / `bootMaxChars` 在 `apply()` 闭包捕获，手改不热生效 | 二者是 **composition 键**：`memory.json` 的 `pickFields` 白名单**不含**它们（手改无效，不是"改了不生效"），README 配置表也写明"只在 composition 层生效、改完需重启" | **拒绝**（review 前提有误）：不影响任何已文档化行为。保留现状 |
+| 4 | 【轻微】三个 `render` 回调无 try/catch | 宿主 `createSuccessResult` 已用 `projectionError` 包裹 render；我们的 render 只做字符串拼接 | **拒绝**：加兜底会把拼接 bug 静默化，宿主报错更可诊断 |
+| 5 | 【轻微】`rel.startsWith('raw/')` 语义依赖归一化 | 事实正确（`raw/../x.md` → `x.md` 应放行） | **采纳（注释留档）**：写明按路径段判定、`raw-notes.md` 不会被误判 |
+| 6 | 【轻微】`findSectionHeading` 用 `heading.includes(category)`，`user` 会命中 `## user-preferences` | 属实（低概率、行内容仍正确，但归属段可能错） | **采纳**：改成词边界匹配（`^cat(?![\p{L}\p{N}_-])`），补测试 |
+| 7 | 【轻微】`deriveIndexSubset` 预算用 UTF-16 `.length`，与 `clampText` 的码点计数不一致 | 属实，但只影响预算的临界计数（BMP CJK 一致），不影响截断/丢弃行为 | **登记不修**：等真正出现 astral 字符引发的预算偏差再统一 |
+| 8 | 【轻微】`resolveInside` 的 symlink 穿越无测试 | 我在 review 到达前已加固（realpath 校验 + `raw/` 双路径判定）并补了测试 | 已闭环 |
+
+- 附带：review 未发现的自身加固——`resolveInside` 现在拒绝**经符号链接指向库外**的路径（含 `raw/` 软链），并在 store 根不存在时停止向上遍历（否则会误判 `OUT_OF_STORE`）；`session.surface` 不可用时降级为"只发整块、绝不猜基线"。
+- 验证报告：以上修改后 `node --test` 103 条全绿、`--self-test` 通过；**隔离实例真实会话第二轮 E2E**（改判据之后）复现同一结果：持久日志 `seq=11 form=snapshot`（670 字符，段落名 `memory:header … memory:log.md`、段落拼接 === 正文）、写回后 `seq=32 form=notice`（473 字符）、模型可见请求里 FULL 一次 + NOTICE 一次且后续不再重发。
+
+### v0.7.0-fork（2026-09-23）注入与检索层改造（(a)(b)(c) 落地）
+- **(a) 内置索引分层**：新增 `index-format.js`（行解析 / 热页子集派生 / 一行 upsert）与 `indexBootMode: off | derive`（默认 `derive`）；boot 段落现算 `salience=1` 子集，**外置 `make-index-boot.mjs` 不再是必需**（老库的 `index.boot.md` 仍被兼容与刷新）。
+- **(b) 条目级增量注入**：新增 `injector.js`——块拆成命名段落，首轮 `snapshot`、变化只发 `notice` 增量、无变化不发；压缩/未落地/重启三种失效面各自有判据（surface 比对 + 源文件 mtime 容差）。**注入机制由 `systemPrompt.context()` 改为 `agent/pre-step` 贡献**——原因见 §5.2（宿主对 runtime-context 拼接 "supersedes earlier snapshots" 的框架与增量语义冲突）。
+- **(c) 三个记忆工具**：新增 `pages.js`（检索 / 读取 / 两步写入引擎）、`tools.js`（模型可见定义）、`tool-schema.js`（参数校验，刻意不引入宿主 `dsh-tools` 以避开第二份宿主实例）；`registerTools` 可整体关闭（面板热改）。
+- 配置/UI：`SettingsSchema` + `memory.json` 新增 `indexBootMode` / `registerTools`；设置面板「记忆 Memory」区 10 → 12 项；`AutoCommitter.check()` 返回状态字（`clean|waiting|committed|skipped|failed`），`memory_write` 据此如实回报 git 结果。
+- 测试：新增 `index-format` / `injector` / `tools` 三个测试文件，boot 测试补热页子集与预算用例；`node --test` 从 7 文件 55 条 → 10 文件 100 条全绿。
+- 待办（如实记录）：**(d) 可选 automemory 未实现**（理由见 §5.4）；L3–L7 未跑（切换 profile 前必须补跑）。
