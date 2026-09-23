@@ -27,6 +27,7 @@
 - **复利记忆**：遵循 Karpathy 的 *LLM Wiki* 约定——记忆是"一次编译、持续保鲜"的持久产物，不是每次查询重新 RAG。remember / recall / consolidate / forget 四操作 + salience 三级衰减。
 - **可迁移**：记忆本体是纯 markdown + git + 自描述 schema，任何能读 markdown 的 agent 都能接手。`dsh-memory pack/unpack` 打包迁移。
 - **内嵌技能**：通过 `ctx.skills.register()` 注册 `memory` 技能（操作协议随插件分发）；项目级 `.dsh/skills/memory` 文件技能仍可覆盖它。
+- **可选：会话收尾自动抽取记忆（automemory，默认关）**：开启后，每轮结束（空闲）时用模型两阶段判断「本会话有没有值得长期保存的内容」——值得才写，且走与 `memory_write` **同一套引擎**（查重 + 版本校验 + 自动更新 index 一行 + log 条目）。护栏：只对当前激活会话、每会话限次、需间隔若干轮、agent 本轮自己已写库就让位、一切失败只记日志不打断会话；设置面板另有「本次会话暂停自动记忆」。**默认关闭**——这是唯一会自动改写记忆库的路径。
 - **防懒 digest 唤醒**：每轮结束后，若 agent 空闲且记忆库超过 `digestNudgeAfterMinutes` 未写入，插件注入一条 digest 提醒（合成消息，走 `agent.followup`），把"会话收尾沉淀"从靠自觉变成有机制兜底；带冷却与每会话限次，不骚扰。**独立于 dsh-plugin-heartbeat**，两插件各自可装、互不依赖。
 - **主动追忆（拟人化）**：对话空下来时，插件会以第一人称主动提起一件**真实记得**的、关于用户或你们之间的事（偏好、往事、未了的决定、最近的进展），把记忆从"只写回"变成"也用起来"——像老友自然想起那样，而非报状态。间隔在最短/最长之间**随机取值**（不固定节奏），配合每会话限次，不骚扰、不编造、不硬聊；纯对话行为，不写记忆库。**同样独立于 heartbeat**。
 - **git 自动提交**：记忆库变更静默 `autoCommitQuietSeconds` 后自动 `git add -A && git commit`（无 `.git` 则跳过）——历史可回滚不再依赖 agent 记得 commit。
@@ -45,6 +46,7 @@
 ├── lib/index-format.js # index.md 解析：行解析 / 热页子集派生 / 一行 upsert
 ├── lib/pages.js        # 记忆页读写引擎：检索 / 读取 / 两步写入 / 派生与日志
 ├── lib/tools.js        # 三个模型可见工具（memory_search / read / write）
+├── lib/automemory.js   # 可选 automemory：轮末两阶段抽取，走同一套写入引擎（默认关）
 ├── lib/tool-schema.js  # 工具参数 JSON Schema 子集 + 校验（不引入宿主 tools 包）
 ├── lib/activity-tracker.js # 两道礼貌闸门：用户是否开口 + 当前激活会话
 ├── lib/digest-guard.js # 防懒 digest 唤醒（空闲 + 记忆库久未写 → followup 提醒）
@@ -93,6 +95,13 @@ dsh plugin --profile <profile> add @log.li/dsh-memory
 | `bootMaxChars` | `6000` | boot 块总字符预算（按段落数平分到每个段落） |
 | `indexBootMode` | `derive` | `derive`：`index.md` 只注入 `salience: 1` 热页子集（永不截断）；`off`：按原文注入整份索引 |
 | `registerTools` | `true` | 注册 `memory_search` / `memory_read` / `memory_write`（宿主没有 tools 服务时自动跳过） |
+| `autoMemory` | `false` | 会话收尾自动抽取记忆总开关（面板可热改） |
+| `autoMemoryMaxPerSession` | `2` | 每个会话最多自动抽取几次 |
+| `autoMemoryMinTurnsBetweenRuns` | `3` | 两次自动抽取之间至少间隔几轮 |
+| `autoMemoryMinTranscriptChars` | `200` | 会话文本（用户+助手）短于此值就不抽取（避免碎片写入） |
+| `autoMemoryMaxPages` | `3` | 单次最多写几页 |
+| `autoMemoryProvider` / `autoMemoryModel` | 未设 | 指定抽取用的模型路由；不设则用会话自身的路由 |
+| `autoMemoryMaxTokens` / `autoMemoryTimeoutMs` | `2000` / `60000` | 单次调用的输出上限与超时 |
 | `autoInject` | `true` | 会话开始时注入 boot 块 |
 | `deferUntilUserSpeaks` | `true` | 用户发出第一条真实消息后才注入（boot 块 / 追忆 / digest 提醒都遵守）；面板可热改 |
 | `activeSessionOnly` | `true` | 只对「当前激活会话」（最近收到用户消息的会话）注入，后台会话不打扰；面板可热改 |
@@ -113,7 +122,7 @@ dsh plugin --profile <profile> add @log.li/dsh-memory
 
 ### 设置面板（热改）
 
-`enabled` / `memoryDir` / `autoInject` / `indexBootMode` / `registerSkill` / `registerTools` / `deferUntilUserSpeaks` / `activeSessionOnly` / `recallEnabled` / `recallIntervalMinMinutes` / `recallIntervalMaxMinutes` / `recallMaxPerSession` 十二项在 DSH 设置页的「记忆 Memory」区块中可改，**即时生效**：boot 注入、常驻索引分层、两道礼貌闸门、技能与工具注册、主动追忆（含随机间隔与次数）随修改立即生效；记忆目录切换时自动为新目录初始化脚手架（`scaffold: true` 时）。其余键（`bootFiles` / `bootMaxChars` / `scaffold` / `configFile` / `digestNudge*` / `autoCommit*`）只在 composition 配置层生效，改完需重启。
+`enabled` / `memoryDir` / `autoInject` / `indexBootMode` / `registerSkill` / `registerTools` / `autoMemory` / `deferUntilUserSpeaks` / `activeSessionOnly` / `recallEnabled` / `recallIntervalMinMinutes` / `recallIntervalMaxMinutes` / `recallMaxPerSession` 十三项在 DSH 设置页的「记忆 Memory」区块中可改（另有「本次会话暂停自动记忆」，由插件自己的 `/api/memory/automemory` 路由按**当前激活会话**读写），**即时生效**：boot 注入、常驻索引分层、两道礼貌闸门、技能与工具注册、主动追忆（含随机间隔与次数）随修改立即生效；记忆目录切换时自动为新目录初始化脚手架（`scaffold: true` 时）。其余键（`bootFiles` / `bootMaxChars` / `scaffold` / `configFile` / `digestNudge*` / `autoCommit*` / `autoMemoryMaxPerSession` / `autoMemoryMinTurnsBetweenRuns` / `autoMemoryMinTranscriptChars` / `autoMemoryMaxPages` / `autoMemoryProvider` / `autoMemoryModel` / `autoMemoryMaxTokens` / `autoMemoryTimeoutMs`）只在 composition 配置层生效，改完需重启。
 
 > **「当前激活会话」怎么判？** DSH 宿主侧没有「浏览器当前聚焦的会话」信号（激活会话是前端概念）。插件用**最近一次收到真实用户消息的 live root agent**作为激活会话的代理：你在哪个会话里说话，哪个会话就激活；切到别处但不发消息时，宿主感知不到「切换」这个动作（这是代理的已知边界）。若日后需要精确到「展开/聚焦」级别，需补一小段客户端 focus 上报。
 
@@ -201,7 +210,7 @@ node scripts/memory.mjs --self-test   # 冒烟测试（无需安装依赖）
 ## 路线图
 
 - [x] 注入层改造（本 fork）：热页 boot 子集 + 条目级增量注入 + `memory_search/read/write` 工具
-- [ ] 可选 automemory（会话收尾自动抽取，默认关，spec §5.4）
+- [x] 可选 automemory（会话收尾自动抽取，默认关，spec §5.4）
 - [ ] TypeScript 重写（带完整类型与构建步骤）
 - [ ] embedding/BM25 检索（规模超过几百页后替代 index 先行）
 - [ ] MCP server（让非 DSH 的 agent 也能用同一套记忆库）

@@ -104,11 +104,24 @@ boot 块渲染为**命名段落**（`header` / `soul-directive` / 每个 boot �
 
 工具定义以**普通对象**注册（`ctx.tools.register`），参数校验在包内完成（`lib/tool-schema.js`，与宿主支持的 JSON Schema 子集一致）——**刻意不 import `@deepseek-ai/dsh-tools`**：link 安装时包解析按 realpath 走本仓库 `node_modules`，引入宿主 tools 包会连带引入 `dsh-scope`/`dsh-llm` 等**第二份宿主实例**（scope 身份、工具装配都可能错乱），违反「插件不得声明共享宿主包」。宿主仍会校验 `output.schema`，因此三个工具的输出 schema 与实际返回值都由测试逐字段断言。
 
-### 5.4 (d) 可选 automemory（默认关）—— **未实现（本轮不做，见下）**
+### 5.4 (d) 可选 automemory（默认关）—— **已实现**
 
-设计仍然有效：`turn/end` 或空闲时用 `ctx.llm.stream()` 两阶段抽取（先判断"有没有值得记的"，再写），默认关闭；开启后设置页提供"本次会话暂停自动记忆"。
+`autoMemory`（默认 `false`，设置面板可热改）。开启后，在**与 digest guard 同一个空闲边界**（`agent/turn-stopping`，每个 live root agent 一个实例）做**两阶段**抽取，两次调用都走 `ctx.llm.stream`（一次就是一次模型调用，可指定 `autoMemoryProvider`/`autoMemoryModel`，否则用会话自身的路由）：
 
-本轮**未实现**的理由（如实记录）：它需要 LLM 路由（provider/model 解析与降级）、会话转录裁剪、结构化输出解析、设置面板的会话级暂停控件，**并且是唯一会自动改写记忆库的路径**——风险面最大、收益最低（默认关）。因此按「先落 (a)(b)(c) 并端到端验证，再单独一轮做 (d)」推进；在 (d) 落地前，spec 不把默认关的能力描述成可用功能。
+1. **classify** —— 「本会话有没有值得长期保存的东西？」必须回严格 JSON；`remember: false` 就直接结束（不写、不再调第二次）。
+2. **extract** —— 「写页面」：回 `{pages:[{path, content, summary, salience}], logEntry}`，随后**走与 `memory_write` 完全相同的引擎**（`writeMemoryPage`：同主题查重、改旧页自动带 `ifVersion`、更新 `index.md` 一行、重生成存在的派生文件），log 条目直接追加（`appendLogEntry`）。
+
+**护栏（都是硬要求，逐条有实现与测试）**：
+- 默认关；关着时**一次模型调用都不发**。
+- 只对「用户正在说话的会话」生效（复用两道闸门同一套 activity-tracker 代理）；后台会话不写。
+- 每会话最多 `autoMemoryMaxPerSession`（默认 2）次，两次之间至少 `autoMemoryMinTurnsBetweenRuns`（默认 3）轮——轮边界订阅的是**会话事件** `ctx.on('session/event', …event.type === 'turn/start')`（**不是** agent 事件：agent 作用域的派发只有 `agent/turn-stopping` 等，订阅错名字会让计数器永远为 0、automemory 永不触发——这个 bug 正是隔离实例 E2E 抓出来的，单测没抓到因为测试自己手动触发了监听器）。
+- 会话文本（用户+助手）短于 `autoMemoryMinTranscriptChars`（默认 200）不抽取（键名如实描述计量对象）。
+- **agent 本轮自己写过库就让位**（比对轮首/轮末的记忆库 mtime）——它自己的 digest 判断优先。
+- 写路径全部经 `pages.js`：越界、符号链接穿越、`raw/` 只读、非 `.md`、同主题页查重一律拒绝；单页大小与页数都有上限。
+- 一切失败（provider 抛错、JSON 解析失败、写入被拒、服务缺失）只记日志、绝不打断 agent 循环。
+- **设置面板**：`autoMemory` 开关 + 「**本次会话暂停自动记忆**」；后者由插件自建路由 `/api/memory/automemory` 服务，**Host 侧把「本次会话」解析为当前激活会话**（面板不知道用户在看哪个会话），GET 返回 `{enabled, sessionId, paused}`、POST `{paused:boolean}` 切换；没有激活会话时 POST 返回 409。
+
+（未做取舍：面板暂停按会话 id 记在内存里，进程重启即清零——这是有意的：暂停是「别在这个会话里自作主张写」的临时意愿，不是持久配置。）
 
 ## 6. 约束（硬）
 
@@ -165,6 +178,7 @@ boot 块渲染为**命名段落**（`header` / `soul-directive` / 每个 boot �
 | L7 | 数据面不变：换装前后记忆库零变化 | 换装前后 `git -C <memoryDir> status` 均干净、页面内容逐字节一致 |
 | L8 | **工具闭环**：`memory_search` → `memory_read` → `memory_write` | 真实会话内三连调用全部成功；写回后读回 `index.md` 那一行、`git log` 有对应提交、`memory_write` 报告 `action/indexRow/autocommit` 与实际一致 |
 | L9 | **增量注入**：改一页后只重发变化段 | 同一会话内写回一页后，会话日志新增一条 `form: 'notice'` 注入，其文本只含该段落、并带「未列出的段落仍然有效」声明；未改动时无新增注入消息 |
+| L10 | **可选 automemory 链**（默认关，开启才跑）：轮末两阶段 → 写库 → 下一轮增量注入 | 真实会话里开启 `autoMemory`：轮末出现 classify + extract 两次模型调用；store 出现页面 + index 行 + log 条目；**下一轮**的首个请求里出现新的 `form: 'notice'`（automemory 的写回被增量注入接住）；agent 本轮自己写库时 automemory 让位（无 automemory 调用） |
 
 ### ② 可用结构断言替代的项（须写明理由；改动触及其逻辑时升格为必跑）
 
@@ -173,7 +187,8 @@ boot 块渲染为**命名段落**（`header` / `soul-directive` / 每个 boot �
 ### ③ 按本次改动触达面追加
 
 - **改名（2026-09-23）**：包解析自 `link:` 路径、`insert.name` == 包名、client bundle 可组合、boot 块模型可见面为新名、全仓无旧名残留。
-- **内置索引分层 / 检索工具（待实现后追加）**：boot 增量对照（记忆不变不重发、改一页只重发变化段）；`memory_search → read → write` 闭环（含 `index.md` 一行更新与 `git log` 提交）。
+- **内置索引分层 / 检索工具（已实现，见下）**：boot 增量对照（记忆不变不重发、改一页只重发变化段）；`memory_search → read → write` 闭环（含 `index.md` 一行更新与 `git log` 提交）。
+- **可选 automemory（已实现，L10）**：两阶段抽取 → 走同一写入引擎 → 下一轮增量注入接住；护栏（会话限次/轮间隔/agent 自己写过就让位/失败不打断）逐条断言。
 
 ### 当前状态（必须与事实一致）
 
@@ -226,3 +241,24 @@ boot 块渲染为**命名段落**（`header` / `soul-directive` / 每个 boot �
 - 配置/UI：`SettingsSchema` + `memory.json` 新增 `indexBootMode` / `registerTools`；设置面板「记忆 Memory」区 10 → 12 项；`AutoCommitter.check()` 返回状态字（`clean|waiting|committed|skipped|failed`），`memory_write` 据此如实回报 git 结果。
 - 测试：新增 `index-format` / `injector` / `tools` 三个测试文件，boot 测试补热页子集与预算用例；`node --test` 从 7 文件 55 条 → 10 文件 100 条全绿。
 - 待办（如实记录）：**(d) 可选 automemory 未实现**（理由见 §5.4）；L3–L7 未跑（切换 profile 前必须补跑）。
+
+### v0.7.0-fork（续，2026-09-23）(d) 可选 automemory 落地
+- 新增 `lib/automemory.js`（两阶段抽取 + 护栏 + 暂停）与设置面板两项（`autoMemory` 开关、「本次会话暂停自动记忆」）、插件自建路由 `/api/memory/automemory`（Host 侧把「本次会话」解析为当前激活会话）。
+- **E2E 抓出的真 bug（单测没抓到）**：`AutoMemory` 最初订阅 `agent.ctx.on('turn/start')` 计轮数，而轮边界是**会话事件**（agent 作用域只派发 `agent/turn-stopping` 等）→ 计数器永远为 0、`autoMemoryMinTurnsBetweenRuns` 永远不满足、automemory **永不触发**。改为 `ctx.on('session/event', …)` 后 E2E 通过；测试里的假 ctx 因手动触发监听器而掩盖了它——教训：假事件名与真宿主事件名不一致时，单测会给出假绿。
+- **E2E（隔离实例 + stub 模型端点，真实宿主长驻进程）**：探针驱动插件创建真实会话跑三轮——第 1 轮 agent 用 `memory_write` 自己写库、automemory 按护栏让位；第 2 轮轮末 classify+extract 各一次 → 页面/index 行/log 条目落盘（第二次运行还走了 `ifVersion` 更新路径）；第 3 轮首个请求里出现**新的 notice**（automemory 的写回被增量注入接住）。另发现：`dsh --profile headless "…"` 一轮即退，**轮末任务（automemory / digest 提醒）在 one-shot 里跑不完**，验证必须用长驻实例（探针插件配方已记进记忆库 `skills/e2e-stub-model-harness.md`）。
+
+### review 处置记录（2026-09-23，独立模型家族审查 (d) automemory 变更集）
+
+| # | review 说法 | 我的核验 | 处置 |
+|---|---|---|---|
+| 1 | 【中等】失败运行（provider 抛错/超时）**不计**会话上限 → 坏路由每轮重试、永不收敛；`autoMemoryMaxPerSession` 对失败运行不生效 | 属实：`called > 0` 才记账，异常走 catch 什么都不记 | **采纳**：任何**发起过尝试**的运行都在 `finally` 里记账（`runs += 1`、`turnsSinceRun = 0`）——坏 provider 最多烧满 cap 就静音；而「完全没碰到模型」（无路由/无 llm 服务）属于**配置问题不是预算问题**，改为**latch**（`unroutable`，只 warn 一次、路由恢复后自动解除）。补两条测试：坏 provider 烧满 cap 后 `session cap reached`；无路由 latch + 恢复 |
+| 2 | 【轻微】轮首 mtime 快照为 0（store 不存在）时「agent 本轮写过就让位」整条短路失效 | 属实：`0` 既表示"空库"又表示"未知" | **采纳**：`storeMtime()` 在目录不可读时返回 `undefined`（与空库的 `0` 区分），判据只在**两端都已知**时生效 |
+| 3 | 【轻微】死导入 `readOwnInjections`；`this.turns` 只增不读 | 属实 | **采纳**：删除 |
+| 4 | 【轻微】`AbortSignal.timeout` 的 signal 支持依赖宿主契约，若被忽略则流停滞 → `running` 永真、该会话 automemory 无声报废 | 宿主 `GenerateOptions.signal` 有契约（"implementations must honor options.signal"），但"缺整体 deadline 兜底"这一点成立 | **采纳**：`ask()` 用 `AbortController` + `Promise.race(collectStreamText, deadline)` 双保险（超时即 abort + 返回 undefined），不再单靠信号支持 |
+| 5 | 【轻微】`pausedSessions` 只增不减；route 兜底 catch 把内部错误当 400 | 前半属可接受（用户手动暂停的会话数量极小；暂停是"插件生命周期内的临时意愿"）；后半属实 | **部分采纳**：路由兜底改 **500**（并 warn 日志）；暂停集合的"不随会话处置清理"行为**保留并写进 spec**（语义：暂停在插件生命周期内持续，重开同一会话仍然暂停） |
+| 6 | 【轻微】`autoMemoryMinUserChars` 实际量的是全文 transcript，键名误导；>12000 拒写、maxPages 截断、automemory 层的 DUPLICATE 跳过无测试 | 属实 | **采纳**：键重命名为 `autoMemoryMinTranscriptChars`（未发布，改名安全），README/实现/spec 同步；补一条测试覆盖超大页拒写、maxPages 截断、同主题页跳过 |
+| 7 | 【测试缺口】「HTTP 暂停 → 实例真的不跑」只在单测里以注入的 `isPaused` 代理验证，index.js 里 `isPaused: (id) => pausedSessions.has(id)` 这条真实接线无集成测试 | 属实——集成验证需要把实例暴露给测试，代价与收益不成比 | **登记（未修）**：spec §10 如实记为已知覆盖缺口（E2E 覆盖了 automemory 开启时的完整链路，但未覆盖"经 HTTP 暂停后不再运行"这一条） |
+| 8 | 【测试缺口】`turn/start` 事件名与 `(subject, event)` 形状是宿主契约，单测原理上钉不住 | 属实（本次 E2E 正是靠它抓出真 bug） | **登记**：继续由隔离实例 E2E 覆盖（L10），单测不追求 |
+| 9 | 【测试缺口】automemory 写库不主动触发 commit（依赖 60s 静默窗的 AutoCommitter） | 属实且**有意**：automemory 是"静默路径"，不该在轮末同步跑 git；`memory_write`（模型显式写）才主动触发 | **登记（行为保留）**：spec §5.4 写明该取舍 |
+
+- 修正后：`node --test` 119 条全绿、`--self-test` 通过；automemory 链在隔离实例**重跑通过**——三轮会话复现同一结果（classify/extract 各 2 次、页面/index/log 落盘、第三轮首个请求出现第二条 notice），真机记忆库 `git status` 干净（隔离未被击穿）。

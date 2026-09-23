@@ -8,6 +8,7 @@ import test from 'node:test'
 import { fileURLToPath } from 'node:url'
 
 import plugin, {
+  AUTOMEMORY_ROUTE_PATH,
   CONFIG_ROUTE_PATH,
   Config,
   SettingsSchema,
@@ -160,6 +161,7 @@ test('registers the config route and GET serves the resolved config', async () =
   webInject.callback(webCtx)
 
   assert.equal(routes.has(CONFIG_ROUTE_PATH), true)
+  assert.equal(routes.has(AUTOMEMORY_ROUTE_PATH), true)
   const route = routes.get(CONFIG_ROUTE_PATH)
   assert.equal(route.kind, 'exact')
 
@@ -172,6 +174,7 @@ test('registers the config route and GET serves the resolved config', async () =
     registerSkill: true,
     registerTools: true,
     indexBootMode: 'derive',
+    autoMemory: false,
     deferUntilUserSpeaks: true,
     activeSessionOnly: true,
     recallEnabled: true,
@@ -218,6 +221,72 @@ test('POST hot-edits: enabled=false tears skill + tools down; restore re-registe
   dispose()
   assert.equal(disposed.filter((entry) => entry === 'tools').length, 6)
   assert.equal(disposed.filter((entry) => entry === 'skills').length, 2)
+})
+
+test('automemory route reports and pauses the active session; 409 without one', async () => {
+  const { ctx, injects, handlers } = makeFakeCtx()
+  const dispose = plugin(ctx, CFG)
+  const routes = new Map()
+  injectCallback(injects, 'webServer')({
+    webServer: {
+      register(route) {
+        routes.set(route.path, route)
+        return () => routes.delete(route.path)
+      },
+    },
+    effect: () => () => {},
+  })
+  const route = routes.get(AUTOMEMORY_ROUTE_PATH)
+
+  // No live session at all: the panel can read, but there is nothing to pause.
+  let result = await routeCall(route, 'GET')
+  assert.equal(result.status, 200)
+  assert.deepEqual(JSON.parse(result.body), { enabled: false, sessionId: null, paused: false })
+  result = await routeCall(route, 'POST', JSON.stringify({ paused: true }))
+  assert.equal(result.status, 409)
+  assert.match(JSON.parse(result.body).error, /no active memory session/)
+
+  // A live root agent registers its session; speaking in it makes it "active"
+  // (the same proxy the injection gates use).
+  const sessionId = 'session-automemory'
+  const inboxListeners = []
+  const agent = {
+    id: 'agent-a',
+    session: { id: sessionId },
+    ctx: {
+      on: (name, callback) => {
+        if (name === 'agent/inbox/inserted') inboxListeners.push(callback)
+        return () => {}
+      },
+      effect: (fn) => fn(),
+    },
+  }
+  ctx.agents.roots = () => [agent]
+  // The tracker skips agents the registry no longer holds, so the fake registry
+  // has to admit this one.
+  ctx.agents.get = (id) => (id === 'agent-a' ? agent : undefined)
+  // Every per-agent wiring (activity tracker, guards, automemory) subscribes here.
+  for (const entry of handlers.filter((candidate) => candidate.name === 'agent/created')) entry.listener({ agent })
+  for (const callback of inboxListeners) callback({ message: { source: { kind: 'user' } } })
+
+  result = await routeCall(route, 'GET')
+  assert.equal(result.status, 200)
+  assert.deepEqual(JSON.parse(result.body), { enabled: false, sessionId, paused: false })
+
+  result = await routeCall(route, 'POST', JSON.stringify({ paused: 'yes' }))
+  assert.equal(result.status, 400)
+  assert.match(JSON.parse(result.body).error, /boolean/)
+  result = await routeCall(route, 'PUT')
+  assert.equal(result.status, 405)
+
+  result = await routeCall(route, 'POST', JSON.stringify({ paused: true }))
+  assert.equal(result.status, 200)
+  assert.deepEqual(JSON.parse(result.body), { enabled: false, sessionId, paused: true })
+  result = await routeCall(route, 'GET')
+  assert.equal(JSON.parse(result.body).paused, true, 'the pause is remembered for this session')
+  result = await routeCall(route, 'POST', JSON.stringify({ paused: false }))
+  assert.equal(JSON.parse(result.body).paused, false)
+  dispose()
 })
 
 test('POST rejects a bad patch and an empty memoryDir', async () => {

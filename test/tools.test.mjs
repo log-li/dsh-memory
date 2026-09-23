@@ -305,3 +305,22 @@ test('a second store target is honoured on every call', async () => {
     rmSync(second, { recursive: true, force: true })
   }
 })
+
+test('engine-owned files cannot be replaced wholesale', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'memory-tools-owned-'))
+  try {
+    writeFileSync(join(dir, 'index.md'), '# Memory Index\n\n## decisions（决策）\n')
+    writeFileSync(join(dir, 'log.md'), '## [2026-09-23] decision | 种子\n')
+    const write = createMemoryTools({ getMemoryDir: () => dir })[2]
+    for (const path of ['index.md', 'index.boot.md', 'log.md']) {
+      await assert.rejects(
+        () => write.execute({ path, content: '# 覆盖\n' }, {}),
+        /由插件维护/,
+      )
+    }
+    assert.equal(readFileSync(join(dir, 'index.md'), 'utf8'), '# Memory Index\n\n## decisions（决策）\n')
+    assert.equal(readFileSync(join(dir, 'log.md'), 'utf8'), '## [2026-09-23] decision | 种子\n')
+  } finally {
+    rmSync(dir, { recursive: true, force: true })
+  }
+})

@@ -8,6 +8,7 @@ All notable changes to this project are documented here, following [Keep a Chang
 
 - **`memory_search` / `memory_read` / `memory_write` tools.** Sessions no longer have to remember a CLI incantation: search the store by keyword, read one page's body, and write it back. `memory_write` enforces the store's two-step write (duplicate check + version check), keeps the catalog's one-line row in sync, and commits; a new `registerTools` setting turns all three off.
 - **`indexBootMode: derive` (default).** The resident catalog is now the `salience: 1` hot subset computed from `index.md` on the fly (one row per page, summaries compressed to fit the budget), so it is never truncated and the derived `index.boot.md` file is no longer required. Set it to `off` to inject the catalog verbatim.
+- **Optional automemory (`autoMemory`, off by default).** When enabled, the end of an idle turn asks the model two questions — "is anything here worth remembering?" and "write the pages" — and writes through the same engine as `memory_write` (duplicate check, version check, catalog row, log entry). It only ever runs for the session you are actually using, at most twice per session and a few turns apart, stands down when the agent already wrote the store during that turn, and contains every failure. The Settings panel can pause it for the current session.
 
 ### Changed
 
@@ -107,6 +108,7 @@ All notable changes to this project are documented here, following [Keep a Chang
 
 - **新增 `memory_search` / `memory_read` / `memory_write` 三个模型可见工具**：关键词检索记忆页 → 读一页正文（返回写回用的 `version` 令牌）→ 两步写回。`memory_write` 机器强制查重与版本校验，并自动更新 `index.md` 那一行、重生成派生热页子集、触发 git 提交；`registerTools` 可整体关闭。
 - **新增 `indexBootMode`（默认 `derive`）**：常驻索引改为从 `index.md` 现算的 `salience: 1` 热页子集（一行一条、摘要按预算压缩），**永不被截断**，也不再需要外置派生文件 `index.boot.md`；设为 `off` 则按原文注入整份索引。
+- **新增可选 automemory（`autoMemory`，默认关）**：开启后，每轮空闲结束时会用模型两阶段判断本会话是否值得写入长期记忆，值得才写——且走与 `memory_write` **同一套引擎**（查重 + 版本校验 + 自动维护 index 一行 + log 条目）。它只对当前激活会话生效、每会话限次且需间隔若干轮、agent 本轮已自己写库就让位、失败只记日志不打断会话；设置面板可「本次会话暂停自动记忆」。
 
 ### Changed
 
