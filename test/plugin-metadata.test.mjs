@@ -73,7 +73,7 @@ async function routeCall(route, method, body) {
   return { status: res.status, body: res.body }
 }
 
-const TMP = mkdtempSync(join(tmpdir(), 'dsh-plugin-memory-test-'))
+const TMP = mkdtempSync(join(tmpdir(), 'dsh-memory-test-'))
 const CFG = {
   memoryDir: join(TMP, 'memory-dir'),
   scaffold: false,
@@ -272,7 +272,10 @@ test('ships a dsh.bundle manifest so `dsh plugin add` can mount it', () => {
   )
   const patch = readFileSync(join(root, 'cordis.patch.yml'), 'utf8')
   assert.ok(patch.includes('id: dsh-memory'))
-  assert.ok(patch.includes('name: dsh-plugin-memory'))
+  // insert.name 是 ESM 解析名（= 依赖键 / 符号链接目录名），必须等于包名本身；
+  // 解析后与包名比对，而不是写死字面量——改名时才不会出现「包名已改、patch 未改」的漂移。
+  const insertName = patch.match(/id:\s*dsh-memory\s*\n\s*name:\s*'([^']+)'/)?.[1]
+  assert.equal(insertName, pkg.name, 'insert.name must equal package.json name')
 })
 
 test('hot edit: memoryDir re-registers boot + skill against the new directory', async () => {

@@ -1,8 +1,13 @@
-# dsh-plugin-memory
+> **本仓库是 fork**：`@log.li/dsh-memory`，fork 自 [`LittleBlackTong/dsh-plugin-memory`](https://github.com/LittleBlackTong/dsh-plugin-memory)（MIT，2026-09-23）。
+> 本 fork **只改注入与检索层**——对齐 Claude Code 范式（常驻 = 规则 + 一行索引，正文一律按需取），
+> **数据面与配置面对上游保持兼容**（老记忆库直接可用，换装不迁移）。设计真相与路线见 [`.plans/spec/dsh-memory-spec.md`](.plans/spec/dsh-memory-spec.md)。
+> 本机安装：profile 的 `dependencies` 与 `dsh.profile.bundles` 用 `@log.li/dsh-memory`，值写 `link:<本仓库路径>`。
+
+# dsh-memory（`@log.li/dsh-memory`）
 
 <p align="center">
   <a href="https://github.com/LittleBlackTong/dsh-plugin-memory"><img alt="GitHub" src="https://img.shields.io/badge/GitHub-LittleBlackTong%2Fdsh--plugin--memory-blue?logo=github"></a>
-  <a href="https://www.npmjs.com/package/dsh-plugin-memory"><img alt="npm" src="https://img.shields.io/npm/v/dsh-plugin-memory?logo=npm"></a>
+  <a href="https://www.npmjs.com/package/dsh-plugin-memory"><img alt="npm" src="https://img.shields.io/npm/v/dsh-plugin-memory?label=upstream%20npm&logo=npm"></a>
   <img alt="license" src="https://img.shields.io/badge/license-MIT-blue">
   <img alt="node" src="https://img.shields.io/badge/node-%3E%3D18-green">
 </p>
@@ -30,7 +35,7 @@
 插件只拥有**工作流**，不拥有**数据格式**：
 
 ```
-dsh-plugin-memory（本插件）
+@log.li/dsh-memory（本插件）
 ├── lib/index.js        # Cordis 入口：boot 注入 + 运行时技能注册 + settings 热改
 ├── lib/boot.js         # boot 块渲染（SOUL/MEMORY/index + 最近 log，限额截断）
 ├── lib/activity-tracker.js # 两道礼貌闸门：用户是否开口 + 当前激活会话
@@ -53,7 +58,10 @@ dsh-plugin-memory（本插件）
 ## 安装
 
 ```sh
-dsh plugin --profile <profile> add dsh-plugin-memory
+# 本 fork 用 link 接入本地 checkout（不要把 npm 上的同名上游包装进来）：
+#   1) profile 的 package.json：dependencies 加 "@log.li/dsh-memory": "link:<本仓库路径>"，bundles 加 "@log.li/dsh-memory"
+#   2) 重建 node_modules 符号链接（勿跑 pnpm install，见 AGENTS.md）
+dsh plugin --profile <profile> add @log.li/dsh-memory
 ```
 
 （包内置 `dsh.bundle` manifest，`dsh plugin add` 会把它自动挂进 profile 的 bundles 层；dsh-market 里的一键安装同此通道。）
@@ -154,8 +162,8 @@ skill 版是"软保障"（技能目录只注入简介，正文靠模型主动加
 ## 开发
 
 ```sh
-git clone https://github.com/LittleBlackTong/dsh-plugin-memory.git
-cd dsh-plugin-memory
+git clone https://github.com/log-li/dsh-memory.git
+cd <本仓库>
 node scripts/memory.mjs --self-test   # 冒烟测试（无需安装依赖）
 ```
 
@@ -169,7 +177,7 @@ node scripts/memory.mjs --self-test   # 冒烟测试（无需安装依赖）
 - [ ] GitHub Actions CI（跑 `--self-test` 与 lint）
 - [ ] 记忆加密存储选项
 
-欢迎在 [Issues](https://github.com/LittleBlackTong/dsh-plugin-memory/issues) 里提需求、报 bug、交 PR。
+欢迎在 [Issues](https://github.com/log-li/dsh-memory/issues) 里提需求、报 bug、交 PR。
 
 ## License
 

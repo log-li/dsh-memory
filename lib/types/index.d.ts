@@ -1,5 +1,5 @@
 /**
- * Type declarations for dsh-plugin-memory.
+ * Type declarations for @log.li/dsh-memory.
  *
  * The implementation is plain ESM JavaScript (zero build step); these
  * declarations describe its public surface for TypeScript consumers.

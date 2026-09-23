@@ -38,7 +38,7 @@ function makeAgent({ id = 'root-1', status = 'idle', nextStep = [] } = {}) {
 const LOG_TEXT = [
   '# log',
   '',
-  '## [2026-08-18] project | dsh-plugin-memory 已发布 npm',
+  '## [2026-08-18] project | @log.li/dsh-memory 已发布 npm',
   '## [2026-08-19] fix | 心跳插件 v0.1.1：设置面板区块',
 ].join('\n')
 

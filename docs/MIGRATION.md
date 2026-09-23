@@ -1,6 +1,6 @@
 # 记忆迁移指南
 
-记忆的价值在于**不被锁死在某个环境里**。dsh-plugin-memory 的记忆库是纯 markdown + git + 自描述 schema（`SOUL.md` / `MEMORY.md` / `BOOTSTRAP.md`），任何能读 markdown 的 agent 都能接手。本指南覆盖三种迁移场景。
+记忆的价值在于**不被锁死在某个环境里**。@log.li/dsh-memory 的记忆库是纯 markdown + git + 自描述 schema（`SOUL.md` / `MEMORY.md` / `BOOTSTRAP.md`），任何能读 markdown 的 agent 都能接手。本指南覆盖三种迁移场景。
 
 ## 原则
 
@@ -21,7 +21,7 @@ dsh-memory pack memory-backup.tar.gz
 MEMORY_DIR=/new/location/.memory dsh-memory unpack memory-backup.tar.gz
 ```
 
-新环境只需安装 dsh-plugin-memory 并把 `memoryDir` 指到新位置。agent 读 boot 块 + `MEMORY.md` 即可接手。
+新环境只需安装 @log.li/dsh-memory 并把 `memoryDir` 指到新位置。agent 读 boot 块 + `MEMORY.md` 即可接手。
 
 ## 场景二：跨机器
 
@@ -59,7 +59,7 @@ git push -u origin main
 
 | 档位 | 适用环境 | 做法 |
 |---|---|---|
-| **全量** | 装了 dsh-plugin-memory 的 DSH | 整个目录 + `memoryDir` 配置，boot 自动注入 |
+| **全量** | 装了 @log.li/dsh-memory 的 DSH | 整个目录 + `memoryDir` 配置，boot 自动注入 |
 | **标准** | 任意能读文件的 agent（Claude Code / Codex / OpenCode…） | 拷贝目录，把 `SKILL.md` 级协议（见 `skills/memory.md`）放到目标环境的技能目录，boot 手动读 `SOUL.md` + `MEMORY.md` + `index.md` |
 | **精简** | 只有 system prompt 的环境 | 把 `index.md` + 高频页压成一段摘要，贴进 system prompt |
 | **最低配** | 只有一小段 prompt 的环境 | 只贴 `SOUL.md` + `index.md` 摘要——人格与目录恢复了，记忆就"活了"大半 |

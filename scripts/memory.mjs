@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /**
- * dsh-memory — CLI for the dsh-plugin-memory store. No external dependencies.
+ * dsh-memory — CLI for the @log.li/dsh-memory store. No external dependencies.
  *
  * Usage:
  *   dsh-memory init [dir]                  # create the store scaffold (default $MEMORY_DIR or ~/.memory)

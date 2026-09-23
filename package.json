@@ -1,5 +1,5 @@
 {
-  "name": "dsh-plugin-memory",
+  "name": "@log.li/dsh-memory",
   "description": "Long-term memory plugin for DeepSeek Harness: persistent cross-session markdown memory with a soul/persona file, auto-injected at every session start, plus remember/recall/consolidate/forget workflows and portable migration tooling.",
   "version": "0.6.0",
   "license": "MIT",
@@ -62,10 +62,16 @@
   },
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/LittleBlackTong/dsh-plugin-memory.git"
+    "url": "git+https://github.com/log-li/dsh-memory.git"
   },
   "bugs": {
-    "url": "https://github.com/LittleBlackTong/dsh-plugin-memory/issues"
+    "url": "https://github.com/log-li/dsh-memory/issues"
   },
-  "homepage": "https://github.com/LittleBlackTong/dsh-plugin-memory#readme"
+  "homepage": "https://github.com/log-li/dsh-memory#readme",
+  "devDependencies": {
+    "@deepseek-ai/cordis": "^4.0.4",
+    "@deepseek-ai/dsh-skill": "^0.1.2-rc.1",
+    "@deepseek-ai/dsh-system-prompt": "^0.1.2-rc.1",
+    "@deepseek-ai/schemastery": "^3.18.4"
+  }
 }

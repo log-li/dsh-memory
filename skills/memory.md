@@ -1,6 +1,6 @@
 # memory — 长期记忆技能操作手册
 
-> 本技能由 `dsh-plugin-memory` 注册。记忆库位置见本技能的资源指引（resource base），下文相对路径均以它为基准。
+> 本技能由 `@log.li/dsh-memory` 注册。记忆库位置见本技能的资源指引（resource base），下文相对路径均以它为基准。
 
 本技能让 agent 成为**有长期记忆、跨会话一致、可迁移**的协作者，而不是每次从零开始的无状态问答。实现遵循 Karpathy 的 *LLM Wiki* 约定：记忆不是查询时才重新检索的 RAG，而是**一次编译、持续保鲜、复利累积**的持久产物。记忆本体是一组 markdown + git，任何能读 markdown 的 agent 都能接手（迁移）。
 
