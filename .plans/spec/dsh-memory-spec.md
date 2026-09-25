@@ -2,7 +2,7 @@ Status: active
 
 # dsh-memory（fork）：把记忆注入层改成 CC 式
 
-- **创建于**: 2026-09-23 · **最近更新**: 2026-09-23（§5 改造点 (a)(b)(c)(d) 已实现；(e) 去 CC 化残留：铸魂/主动追忆/防懒提醒/两道礼貌闸门全部删除，automemory 改为默认开）
+- **创建于**: 2026-09-23 · **最近更新**: 2026-09-25（本机 profile 已切到本 fork 并重启，真机实证 L1/L2/L7/L9/L10/L11/L13/L14；未覆盖项只剩 L4 浏览器侧、跨进程会话恢复、HTTP 暂停的集成断言）
 - **上游**: [`LittleBlackTong/dsh-plugin-memory`](https://github.com/LittleBlackTong/dsh-plugin-memory) v0.6.0（MIT）
 - **本仓库**: `log-li/dsh-memory`（`origin` = 本 fork，`upstream` = 上游）
 - **本机宿主**: `@deepseek-ai/dsh 0.1.5-rc.1`（peer 范围见 §6）
@@ -165,6 +165,8 @@ boot 块渲染为**命名段落**（`header` / `soul-directive` / 每个 boot �
   ```
   ⚠️ **不要跑 `pnpm install`**（会剪掉 patch 注入型模块，见本机记忆 `skills/dsh-plugin-development.md`）。
 - ⚠️ **三处必须一次改齐，不留并存窗口**（2026-09-23 外部 review）：依赖键、`dsh.profile.bundles`、符号链接/lock 要在**同一步**完成——先加新再删旧会造成新老插件并存：boot 块注入两次、`memory` 技能重名、设置面板出现两个分区、命名空间冲突。改完**必须实测设置面板读写**（本 fork 的 devDependencies 会遮蔽宿主的 `schemastery`，版本与宿主不同，是切换后唯一新增的风险面）。
+- **本机切换已执行（2026-09-25）**：三处一次改齐（依赖键 + `dsh.profile.bundles` + 符号链接/`pnpm-lock`），**未跑 `pnpm install`**，旧上游目录整体改名保留（不删除）以便回滚；`--dump-config` 只挂载一条本插件、旧包 0 处。回滚＝还原改前三件 + 旧目录移回 + 重启；**数据面（记忆库）全程不动**。
+- **★ 换注入层必须同步「被注入的协议文件」**（2026-09-25 真机踩到）：插件侧 persona/提醒代码删净后，注入块里仍出现「铸魂 / digest 提醒 / SOUL.md」字样——来源是**记忆库自己的 `MEMORY.md`**（boot 注入的用户数据）继续承诺已删除的机制。结论：换装清单里必须有「同步改写被注入的协议/指引文件」一条，并在**真实会话里通读注入全文**（只 grep 插件源码会漏）。
 - **与上游同步**：`git fetch upstream && git merge upstream/main`；冲突集中在 `lib/*`（我们改动处）。**上游改了 `cordis.patch.yml` 的 name 时要改回我们的**。
 
 ## 8. 验收标准
@@ -235,7 +237,15 @@ boot 块渲染为**命名段落**（`header` / `soul-directive` / 每个 boot �
   - ✅ **L8**：真实宿主会话里 `memory_search` → `memory_read`（拿到 `version`）→ `memory_write` 全链路成功；写回报告与实际一致（`index.md：inserted`、`log.md：已追加`、`git：committed`），磁盘上索引行插进正确分区、log 追加、`git log` 出现 auto-commit 提交；另一轮里**故意带错 `ifVersion` 新建页 → CONFLICT 拒绝**（负路径也验了）。
   - ✅ **L9**：写回后**模型可见请求**里出现且只出现一条 `form='notice'` 增量（473 字符，含 index/log 两段、「未列出的段落仍然有效」），此后无变化的那一步**没有任何新增注入**；持久日志 `seq=32` 记录了同一增量。
   - ⚠️ **未覆盖**：会话在新进程里**恢复**（headless app 无 `--resume`）→ 仅由单测覆盖；真实 LLM 行为（stub 不是真模型）。
-- 因此：**切换动作是 L4（浏览器侧）/L6 的门口**——不得先切换再补验证。
+- **2026-09-25 真机实证（本机在用 profile，切换 + 重启后；模型为真实 LLM，非 stub）**：
+  - ✅ **L1（活体装载）**：宿主侧配置路由 `/api/memory/config` 返回**恰 7 键**（`enabled`/`autoInject`/`registerSkill`/`registerTools`/`indexBootMode=derive`/`autoMemory=true`），暂停路由返回当前激活会话 —— 说明插件已在真实 profile 装载并响应。启动日志侧**无法取证**（GUI 由用户启动、stderr 未落盘）；改用「配置路由 + 注入块形态 + 派生计数」三条行为证据替代（**替代理由已记，非默认通过**）。
+  - ✅ **L2/L11**：真实会话持久日志（解压 `session.v3.jsonl.zstd`，`seq=2735`）读到注入全文并逐字通读：`form='snapshot'`、5,064 字符、段落＝规则段(263) + `MEMORY.md`(1,767) + `index.boot.md`(2,666) + `log.md`(347) —— **无 `SOUL.md` 段落、无引导词、规则段零 persona 词**（记忆库里明明存在遗留 `SOUL.md`/`BOOTSTRAP.md`）。
+  - ✅ **L2 派生模式活体证据**：该 index 段落的抬头与计数（`### index.boot.md（boot 子集：salience=1 热页）` + `17/17 条`）与 `lib/boot.js` 的 `renderCatalogPart` 输出**逐字一致**，而磁盘上的 `index.boot.md` 是另一套措辞 ⇒ 段落确由插件**现场从 `index.md` 派生**，不是读磁盘派生文件。
+  - ✅ **L13**：**真实子代理会话**（同目录 3 个子会话，带 `parentSession` 指向 root）注入次数 **0**，同一 root 会话为 2 ⇒ root-only 结构性规则真机生效（此前仅源码核对 + 探针断言）。
+  - ✅ **L9（真机）**：改动被注入的 `MEMORY.md` 后，**同一步**内收到 `form='notice'` 的增量消息（只重发变化段落、未变段落标注仍然有效）⇒ 条目级去重在真实会话里工作。
+  - ✅ **L10/L14（真机 + 真实 LLM）**：`autoMemory` 未显式配置即为**开**；轮末两阶段抽取真实发生并**写出新页 + 目录行 + 自动提交**（新页内容经人工通读，与来源会话一致、无编造）。
+  - ✅ **L7**：真机记忆库 `git status` 干净、CLI `status` 可用；三工具 `memory_search`/`memory_read`/`memory_write` 已在会话工具表注册。
+  - ⚠️ **仍未覆盖**：**L4 的浏览器侧**（设置面板 DOM 渲染——只验过宿主侧配置路由；插件无 dist 产物、client bundle 由宿主组装，未在浏览器里看过面板）、**新进程恢复会话**（仅单测）、**经 HTTP 暂停后实例确实不跑**（仅单测，集成缺口）。
 
 ## 11. 变更历史
 
@@ -315,3 +325,9 @@ boot 块渲染为**命名段落**（`header` / `soul-directive` / 每个 boot �
 | 9 | 【测试缺口】`isRoot` 与真实 `ctx.agents.roots()` 的接线只有假谓词；L13 端到端未跑 | 属实 | **登记**：宿主源码已核（`roots()` = `owner === undefined`，子代理必被排除），真实宿主里已用探针确认 `roots()=1 / mainIsRoot=true`；**真实子代理会话未构造**，如实记为 L13 未跑 |
 
 - 修正后：`node --test` **8 文件 84 条**全绿、`--self-test` PASS；注入块文本已在 v0.8.0 的隔离 E2E 里读回核对（本轮仅改文案与计数，未再动注入路径）。
+
+### v0.8.0-fork 切换与真机验证（2026-09-25）
+
+- **本机 profile 已切换到本 fork 并重启**：三处一次改齐（依赖键 + `dsh.profile.bundles` + 符号链接/`pnpm-lock`），未跑 `pnpm install`，旧上游目录整体改名保留（回滚点）。切换后真机实证见 §10「2026-09-25 真机实证」：L1/L2/L7/L9/L10/L11/L13/L14 全绿（含**真实 LLM** 下的 automemory 落盘、**真实子代理会话**注入 0 次、派生模式活体计数），未覆盖项只剩 L4 浏览器侧、跨进程会话恢复、HTTP 暂停的集成断言。
+- **新增纪律（写进 §7）**：换注入层必须同步改写**被注入的协议文件**——本次真机踩到：插件侧 persona 文本已删净，但注入块里仍出现「铸魂 / digest 提醒 / SOUL.md」，来源是记忆库自己的 `MEMORY.md`（boot 注入的用户数据）在承诺已删除的机制。已改写该文件（元记忆不列 persona 文件、增加「注入与派生」小节说明 root-only + 现场派生、硬约束 1/2 去掉提醒与手工派生脚本）。教训：**审计对象是「模型实际读到的全文」，不是插件源码**。
+- **勘误**：此前记的「`MEMORY.md` 3012 字符 > 每文件预算 2800 会截断」为**字节/字符混淆**（实际 1752 字符；真机注入该段落 1,767 字符）——预算一直充足，`bootMaxChars: 5600` 无需调整。
