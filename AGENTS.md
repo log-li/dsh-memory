@@ -18,7 +18,7 @@ DSH 的长期记忆插件（**fork**）：markdown + git 记忆库 + 开机注�
    **当前状态（2026-09-25）：本机 profile 已切到本 fork 并重启，四处命名一致**——切换时三处（依赖键 + `bundles` 项 + 符号链接/`pnpm-lock`）**一次改齐、不留新老并存窗口**（原因与后果见 spec §7）。**换注入层还必须同步改写「被注入的协议文件」**（如记忆库 `MEMORY.md` 里对已删除机制的承诺）——否则旧文本继续指挥模型；验证时要通读**模型实际读到的注入全文**，不能只 grep 插件源码（spec §7）。
 4. **越界与查重**：`memory_read` / `memory_write` 的路径必须规范化后落在 `<memoryDir>` 内（否则拒绝）；写入前先查同主题页（提示"改旧页"而非新增）。
 5. **profile 侧不要跑 `pnpm install`** 来改链接：会剪掉**只在 node_modules、不在 package.json/lock** 的 patch 注入型模块 → 启动 `module not found`。改链接＝手改三处（package.json / 符号链接 / pnpm-lock）。
-6. **宿主兼容**：peer 范围自 `^0.1.2-alpha.1` 起；**升级到 `0.1.6+` 前必须先实测**（Session 日志 v4、presets 归插件组合包、settings 迁 profile 等破坏性变更）。
+6. **宿主兼容**：peer 范围自 `^0.1.2-alpha.1` 起；**升级到 `0.1.6+` 前必须先实测**（Session 日志 v4、presets 归插件组合包、settings 迁 profile 等破坏性变更）。**2026-09-25：本机宿主 0.1.7-rc.2 上已实测通过**（装载/注入/三工具/automemory；会话读取走宿主 session API，与磁盘日志格式无关）。
 
 ## 命令
 

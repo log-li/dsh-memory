@@ -5,7 +5,7 @@ Status: active
 - **创建于**: 2026-09-23 · **最近更新**: 2026-09-25（本机 profile 已切到本 fork 并重启，真机实证 L1/L2/L7/L9/L10/L11/L13/L14；未覆盖项只剩 L4 浏览器侧、跨进程会话恢复、HTTP 暂停的集成断言）
 - **上游**: [`LittleBlackTong/dsh-plugin-memory`](https://github.com/LittleBlackTong/dsh-plugin-memory) v0.6.0（MIT）
 - **本仓库**: `log-li/dsh-memory`（`origin` = 本 fork，`upstream` = 上游）
-- **本机宿主**: `@deepseek-ai/dsh 0.1.5-rc.1`（peer 范围见 §6）
+- **本机宿主**: `@deepseek-ai/dsh 0.1.7-rc.2`（peer 范围见 §6；0.1.7-rc.2 上的装载/注入/工具/automemory 已实测通过）
 
 > **本文档是活文档**：描述项目「现在是什么样」，随设计迭代滚动更新；历史靠 git log 与末尾「变更历史」回溯。
 
@@ -150,8 +150,8 @@ boot 块渲染为**命名段落**（`header` / `soul-directive` / 每个 boot �
 1. **数据面不动**：`<memoryDir>` 目录结构、`MEMORY.md`/`index.md` 格式、`log.md` 条目格式**保持上游兼容**（老库直接可用；新派生文件必须可删可重建）。
 2. **配置面：保留键语义不变，删除键被忽略**（v0.8.0 修订）：`enabled`/`memoryDir`/`autoInject`/`registerSkill`/`autoCommit*`/`scaffold`/`configFile` 语义不变；**已删除** `recall*`、`digestNudge*`、`deferUntilUserSpeaks`、`activeSessionOnly`——`memory.json` 里残留的这些键被 `pickFields` 白名单忽略（**不报错**），下次从面板写配置时自然被抹掉。新增键必须有安全默认值。
 3. **命名一致**：包名 `@log.li/dsh-memory` 必须与 profile `dependencies` 键、`dsh.profile.bundles` 项、`cordis.patch.yml` 的 `insert.name` **四处一致**（本机踩过：`insert.name` 是 ESM 包解析名，不一致即启动崩）。
-4. **peer 范围**：`@deepseek-ai/dsh-*` 保持 `^0.1.2-alpha.1` 起；**升级到 0.1.6+ 前必须先实测**（Session v4、settings 迁移等破坏性变更）。
-5. **测试不退化**：`npm test`（`--self-test`）与 `npm run test:plugin`（7 个文件）全绿是提交前提；新增行为必须带测试。
+4. **peer 范围**：`@deepseek-ai/dsh-*` 保持 `^0.1.2-alpha.1` 起；**升级到 0.1.6+ 前必须先实测**（Session v4、settings 迁移等破坏性变更）。**2026-09-25 实测通过**：本机宿主升到 `0.1.7-rc.2` 后，本插件在真实 profile 装载/注入/三工具/automemory 全部工作（见 §10）。原因之一是**会话读取走宿主 session API**（`session.eventAt(seq)` + `readSurfaceNodes(session)`），不解析磁盘日志文件 → 与 Session 日志 v3/v4 命名无关。
+5. **测试不退化**：`npm test`（`--self-test`）与 `npm run test:plugin`（8 个文件）全绿是提交前提；新增行为必须带测试。
 6. **发布/署名**：MIT 保留上游 LICENSE 与 README 归因；对外发布前按仓库 AGENTS.md 的发布流程走。
 
 ## 7. 命名、安装与上游同步
